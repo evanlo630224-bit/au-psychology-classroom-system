@@ -10,28 +10,55 @@ from sqlalchemy import (
     Time, UniqueConstraint, and_, create_engine, delete, func, insert,
     select, text, update
 )
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, URL
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
 
 BASE_DIR = Path(__file__).parent
 
 
-def get_database_url() -> str:
+def get_database_url():
+    """Build a safe SQLAlchemy URL from Streamlit Secrets.
+
+    Preferred cloud format:
+      [database]
+      host = "aws-0-ap-northeast-1.pooler.supabase.com"
+      port = 5432
+      name = "postgres"
+      user = "postgres.PROJECT_REF"
+      password = "..."
+
+    URL.create() safely handles special characters in passwords.
+    """
     try:
         import streamlit as st
+
+        if "database" in st.secrets:
+            cfg = st.secrets["database"]
+            required = {"host", "port", "name", "user", "password"}
+            if required.issubset(set(cfg.keys())):
+                return URL.create(
+                    drivername="postgresql+psycopg",
+                    username=str(cfg["user"]),
+                    password=str(cfg["password"]),
+                    host=str(cfg["host"]),
+                    port=int(cfg["port"]),
+                    database=str(cfg["name"]),
+                    query={"sslmode": "require"},
+                )
+
         if "DATABASE_URL" in st.secrets:
             value = str(st.secrets["DATABASE_URL"]).strip()
             if value:
                 return value
-        if "database" in st.secrets and "url" in st.secrets["database"]:
-            value = str(st.secrets["database"]["url"]).strip()
-            if value:
-                return value
     except Exception:
         pass
-    env = os.getenv("DATABASE_URL", "").strip()
-    return env or f"sqlite:///{BASE_DIR / 'classroom_booking.db'}"
+
+    env_value = os.getenv("DATABASE_URL", "").strip()
+    if env_value:
+        return env_value
+
+    return f"sqlite:///{BASE_DIR / 'classroom_booking.db'}"
 
 
 def normalize_url(url: str) -> str:
@@ -41,9 +68,11 @@ def normalize_url(url: str) -> str:
         return url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
 
-DATABASE_URL = normalize_url(get_database_url())
+DATABASE_URL = get_database_url()
+if isinstance(DATABASE_URL, str):
+    DATABASE_URL = normalize_url(DATABASE_URL)
 kwargs: dict[str, Any] = {"future": True, "pool_pre_ping": True}
-if DATABASE_URL.startswith("postgresql+psycopg://"):
+if str(DATABASE_URL).startswith("postgresql+psycopg://"):
     kwargs.update({"poolclass": NullPool, "connect_args": {"connect_timeout": 12}})
 engine: Engine = create_engine(DATABASE_URL, **kwargs)
 metadata = MetaData()

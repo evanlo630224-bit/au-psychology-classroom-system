@@ -1,44 +1,31 @@
 import io
 import os
 import re
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from database import (
-    add_course_blocks,
-    cancel_booking,
-    check_booking_conflict,
-    create_booking,
-    database_health_check,
-    delete_authorized_user,
-    delete_course_semester,
-    get_active_open_period,
-    get_all_authorized_users,
-    get_all_bookings,
-    get_audit_logs,
-    get_booking_by_id,
-    get_course_blocks,
-    get_course_semesters,
-    get_dashboard_counts,
-    get_user_bookings,
-    import_authorized_users,
-    init_db,
-    record_login,
-    record_logout,
-    save_open_period,
-    set_course_semester_active,
-    update_booking,
-    verify_authorized_user_by_code,
+    add_course_blocks, cancel_booking, check_booking_conflict, create_booking,
+    database_health_check, delete_announcement, delete_authorized_user,
+    delete_classroom, delete_closure, delete_course_semester,
+    get_active_open_period, get_all_authorized_users, get_all_bookings,
+    get_announcements, get_audit_logs, get_booking_by_id, get_classrooms,
+    get_closures, get_course_blocks, get_course_semesters, get_dashboard_counts,
+    get_setting, get_user_bookings, import_authorized_users, init_db,
+    record_login, record_logout, review_booking, save_announcement,
+    save_classroom, save_closure, save_open_period, set_course_semester_active,
+    set_setting, verify_authorized_user_by_code,
 )
+from notifications import send_booking_email
+from reports import booking_pdf, booking_qr_png
 
 BASE_DIR = Path(__file__).parent
 PSY_LOGO = BASE_DIR / "assets" / "psychology_logo.jpg"
 AU_LOGO = BASE_DIR / "assets" / "asia_university_logo.png"
 
-ROOMS = ["M502", "M506", "M507", "M510", "800A"]
 TIME_SLOTS = [
     ("08:10", "09:00"), ("09:10", "10:00"), ("10:10", "11:00"),
     ("11:10", "12:00"), ("12:10", "13:00"), ("13:10", "14:00"),
@@ -49,766 +36,369 @@ TIME_SLOTS = [
 
 TEXT = {
     "中文": {
-        "title1": "亞洲大學心理學系",
-        "title2": "專業教室借用及查詢系統",
-        "subtitle": "AU Psychology Classroom Reservation System",
-        "login_title": "系統登入",
-        "login_hint": "請選擇身分並輸入辨識碼",
-        "faculty": "教師",
-        "student": "學生",
-        "admin": "管理員",
-        "id_code": "教師職編／學生學號",
-        "admin_password": "管理員密碼",
-        "login": "登入",
-        "logout": "登出",
-        "home": "首頁",
-        "reserve": "我要借教室",
-        "query": "教室查詢",
-        "admin_panel": "管理員後台",
-        "invalid_user": "身分驗證失敗，僅限心理學系教師及學生使用。",
-        "invalid_admin": "管理員密碼錯誤。",
-        "date": "借用日期",
-        "room": "教室",
-        "start": "開始時間",
-        "end": "結束時間",
-        "phone": "聯絡手機",
-        "email": "聯絡信箱",
-        "reason": "借用事由",
-        "submit": "送出申請",
-        "available": "可借用",
-        "course": "已排課",
-        "reserved": "已借用",
-        "privacy": "本系統僅供亞洲大學心理學系教師與學生使用，資料僅供教室借用與行政管理。",
+        "title1":"亞洲大學心理學系","title2":"專業教室借用及查詢系統",
+        "subtitle":"AU Psychology Classroom Reservation System",
+        "login_title":"系統登入","faculty":"教師","student":"學生","admin":"管理員",
+        "id_code":"教師職編／學生學號","admin_password":"管理員密碼",
+        "login":"登入","logout":"登出","home":"首頁","my_bookings":"我的借用",
+        "reserve":"我要借教室","calendar":"教室行事曆","admin_panel":"管理員後台",
+        "invalid_user":"身分驗證失敗，請確認名冊與辨識碼。","invalid_admin":"管理員密碼錯誤。",
+        "date":"借用日期","room":"教室","start":"開始時間","end":"結束時間",
+        "phone":"聯絡手機","email":"聯絡信箱","reason":"借用事由","submit":"送出申請",
+        "available":"可借用","course":"已排課","reserved":"已借用","closed":"停借",
+        "privacy":"本系統僅供亞洲大學心理學系教師與學生使用。",
+        "welcome":"歡迎使用","pending":"待審核","approved":"已核准",
     },
     "English": {
-        "title1": "Asia University Department of Psychology",
-        "title2": "Classroom Reservation and Inquiry System",
-        "subtitle": "亞洲大學心理學系專業教室借用及查詢系統",
-        "login_title": "System Login",
-        "login_hint": "Select your role and enter your identification code",
-        "faculty": "Faculty",
-        "student": "Student",
-        "admin": "Administrator",
-        "id_code": "Employee ID / Student ID",
-        "admin_password": "Administrator Password",
-        "login": "Log In",
-        "logout": "Log Out",
-        "home": "Home",
-        "reserve": "Reserve a Classroom",
-        "query": "Check Availability",
-        "admin_panel": "Admin Panel",
-        "invalid_user": "Identity verification failed. This system is limited to Psychology faculty and students.",
-        "invalid_admin": "Incorrect administrator password.",
-        "date": "Reservation Date",
-        "room": "Classroom",
-        "start": "Start Time",
-        "end": "End Time",
-        "phone": "Mobile Phone",
-        "email": "Email",
-        "reason": "Purpose",
-        "submit": "Submit",
-        "available": "Available",
-        "course": "Course",
-        "reserved": "Reserved",
-        "privacy": "This system is for Asia University Department of Psychology faculty and students only. Data is used solely for classroom reservation and administration.",
-    },
+        "title1":"Asia University Department of Psychology",
+        "title2":"Classroom Reservation and Inquiry System",
+        "subtitle":"亞洲大學心理學系專業教室借用及查詢系統",
+        "login_title":"System Login","faculty":"Faculty","student":"Student","admin":"Administrator",
+        "id_code":"Employee ID / Student ID","admin_password":"Administrator Password",
+        "login":"Log In","logout":"Log Out","home":"Home","my_bookings":"My Reservations",
+        "reserve":"Reserve a Classroom","calendar":"Classroom Calendar","admin_panel":"Admin Panel",
+        "invalid_user":"Identity verification failed. Please check the roster and code.",
+        "invalid_admin":"Incorrect administrator password.","date":"Reservation Date",
+        "room":"Classroom","start":"Start Time","end":"End Time","phone":"Mobile Phone",
+        "email":"Email","reason":"Purpose","submit":"Submit","available":"Available",
+        "course":"Course","reserved":"Reserved","closed":"Closed",
+        "privacy":"This system is for Asia University Department of Psychology faculty and students only.",
+        "welcome":"Welcome","pending":"Pending","approved":"Approved",
+    }
 }
 
 
-def get_admin_password() -> str:
+def admin_password():
     try:
         if "ADMIN_PASSWORD" in st.secrets:
             return str(st.secrets["ADMIN_PASSWORD"])
-        if "admin" in st.secrets and "password" in st.secrets["admin"]:
-            return str(st.secrets["admin"]["password"])
     except Exception:
         pass
     return os.getenv("ADMIN_PASSWORD", "admin123")
 
 
-def valid_email(value: str) -> bool:
-    return re.fullmatch(
-        r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$",
-        value.strip(),
-    ) is not None
+def valid_email(value):
+    return re.fullmatch(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$", value.strip()) is not None
 
 
-def valid_phone(value: str) -> bool:
+def valid_phone(value):
     return len(re.sub(r"\D", "", value)) >= 8
 
 
-def excel_bytes(rows: list[dict], sheet_name: str) -> bytes:
+def excel_bytes(rows, sheet_name):
     output = io.BytesIO()
-    pd.DataFrame(rows).to_excel(
-        output, index=False, sheet_name=sheet_name, engine="openpyxl"
-    )
+    pd.DataFrame(rows).to_excel(output, index=False, sheet_name=sheet_name, engine="openpyxl")
     return output.getvalue()
 
 
-
-def roster_template_bytes(user_type: str) -> bytes:
+def roster_template_bytes(user_type):
     if user_type == "教師":
-        sample = pd.DataFrame(
-            [
-                {
-                    "教師職編": "T0001",
-                    "姓名": "測試教師",
-                    "聯絡信箱": "teacher@example.com",
-                    "狀態": "啟用",
-                }
-            ]
-        )
+        frame = pd.DataFrame([{"教師職編":"T0001","姓名":"測試教師","聯絡信箱":"teacher@example.com","狀態":"啟用"}])
     else:
-        sample = pd.DataFrame(
-            [
-                {
-                    "學生學號": "910300510",
-                    "姓名": "測試學生",
-                    "聯絡信箱": "student@example.com",
-                    "狀態": "啟用",
-                }
-            ]
-        )
+        frame = pd.DataFrame([{"學生學號":"910300510","姓名":"測試學生","聯絡信箱":"student@example.com","狀態":"啟用"}])
     output = io.BytesIO()
-    sample.to_excel(output, index=False, sheet_name=user_type, engine="openpyxl")
+    frame.to_excel(output, index=False, sheet_name=user_type)
     return output.getvalue()
-
-
-def roster_summary(rows: list[dict]) -> dict:
-    teachers = sum(1 for row in rows if row.get("user_type") == "教師")
-    students = sum(1 for row in rows if row.get("user_type") == "學生")
-    active = sum(1 for row in rows if row.get("status") == "啟用")
-    inactive = sum(1 for row in rows if row.get("status") != "啟用")
-    return {
-        "teachers": teachers,
-        "students": students,
-        "active": active,
-        "inactive": inactive,
-    }
 
 
 def apply_style():
-    st.markdown(
-        """
-        <style>
-        :root { --purple:#4B2BD7; --purple-dark:#2F1A96; }
-        .stApp {
-            background:
-                radial-gradient(circle at top right, rgba(75,43,215,.08), transparent 28%),
-                #ffffff;
-        }
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg,#35188E,#5630D8);
-        }
-        [data-testid="stSidebar"] * { color:white !important; }
-        [data-testid="stSidebar"] [data-baseweb="select"] * {
-            color:#26243A !important;
-        }
-        [data-testid="stSidebar"] input {
-            color:#26243A !important;
-            background:white !important;
-        }
-        .hero {
-            padding:22px 28px;
-            border:1px solid #E5DFFF;
-            border-radius:22px;
-            background:white;
-            box-shadow:0 12px 34px rgba(75,43,215,.08);
-        }
-        .title1 {
-            font-size:clamp(1.8rem,3vw,3rem);
-            font-weight:850;
-            color:var(--purple-dark);
-            line-height:1.1;
-        }
-        .title2 {
-            font-size:clamp(1.5rem,2.5vw,2.5rem);
-            font-weight:780;
-            margin-top:8px;
-        }
-        .subtitle { margin-top:9px; color:#6D6781; }
-        .pill {
-            display:inline-block;
-            margin-top:10px;
-            padding:5px 12px;
-            border-radius:999px;
-            background:#ECE7FF;
-            color:#35188E;
-            font-weight:700;
-        }
-        div[data-testid="stMetric"] {
-            border:1px solid #E5DFFF;
-            border-radius:16px;
-            padding:14px;
-            background:white;
-            box-shadow:0 8px 22px rgba(75,43,215,.06);
-        }
-        .login-card {
-            max-width:680px;
-            margin:1.5rem auto .8rem auto;
-            padding:1.5rem 1.8rem;
-            border:1px solid #E5DFFF;
-            border-radius:22px;
-            background:#fff;
-            box-shadow:0 16px 42px rgba(75,43,215,.10);
-            text-align:center;
-        }
-        .login-card h2 {
-            color:#2F1A96;
-            margin:.1rem 0 .35rem 0;
-            font-size:2rem;
-        }
-        .login-card p {
-            color:#756F88;
-            margin:0;
-        }
-        .user-hero {
-            padding:1.15rem 1.3rem;
-            border-radius:18px;
-            background:linear-gradient(135deg,#F3EFFF,#FFFFFF);
-            border:1px solid #E4DCFF;
-            margin-bottom:1rem;
-        }
-        .user-hero-title {
-            font-size:1.35rem;
-            font-weight:800;
-            color:#2F1A96;
-        }
-        .user-hero-sub {
-            color:#726C84;
-            margin-top:.25rem;
-        }
-        .footer {
-            margin-top:2.5rem;
-            padding:1.2rem;
-            border-top:1px solid #E5DFFF;
-            color:#777184;
-            text-align:center;
-            font-size:.9rem;
-        }
-        .stButton>button,.stFormSubmitButton>button,.stDownloadButton>button {
-            border-radius:12px;
-            font-weight:700;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown("""
+    <style>
+    :root{--p:#4B2BD7;--pd:#2F1A96}
+    .stApp{background:radial-gradient(circle at top right,rgba(75,43,215,.10),transparent 28%),#fff}
+    [data-testid=stSidebar]{background:linear-gradient(180deg,#35188E,#5630D8)}
+    [data-testid=stSidebar] *{color:white!important}
+    [data-testid=stSidebar] [data-baseweb=select] *{color:#26243A!important}
+    [data-testid=stSidebar] input{color:#26243A!important;background:white!important}
+    .hero{padding:22px 28px;border:1px solid #e5dfff;border-radius:22px;background:#fff;box-shadow:0 12px 34px rgba(75,43,215,.08)}
+    .h1{font-size:clamp(1.8rem,3vw,3rem);font-weight:850;color:var(--pd);line-height:1.1}
+    .h2{font-size:clamp(1.5rem,2.5vw,2.5rem);font-weight:780;margin-top:8px}
+    .sub{margin-top:9px;color:#6d6781}.pill{display:inline-block;margin-top:10px;padding:5px 12px;border-radius:999px;background:#ece7ff;color:#35188e;font-weight:700}
+    .login-card,.panel{padding:1.4rem;border:1px solid #e5dfff;border-radius:18px;background:#fff;box-shadow:0 10px 28px rgba(75,43,215,.07)}
+    .announcement{padding:.85rem 1rem;border-left:5px solid #4B2BD7;background:#F6F3FF;border-radius:10px;margin-bottom:.6rem}
+    div[data-testid=stMetric]{border:1px solid #e5dfff;border-radius:16px;padding:14px;background:#fff;box-shadow:0 8px 22px rgba(75,43,215,.06)}
+    .stButton>button,.stFormSubmitButton>button,.stDownloadButton>button{border-radius:12px;font-weight:700}
+    .footer{margin-top:2rem;padding:1rem;border-top:1px solid #e5dfff;color:#777;text-align:center}
+    </style>
+    """, unsafe_allow_html=True)
 
 
-def render_header(t):
-    left, center, right = st.columns([1.1, 4.5, 1.1], vertical_alignment="center")
+def header(t):
+    left, center, right = st.columns([1.3,4.6,1.3], vertical_alignment="center")
     with left:
-        if PSY_LOGO.exists():
-            st.image(str(PSY_LOGO), width=210)
+        if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(
-            f"""
-            <div class="hero">
-                <div class="title1">{t["title1"]}</div>
-                <div class="title2">{t["title2"]}</div>
-                <div class="subtitle">{t["subtitle"]}</div>
-                <div class="pill">AU-PCRS V3.1 Enterprise</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V4.0 Enterprise</div></div>', unsafe_allow_html=True)
     with right:
-        if AU_LOGO.exists():
-            st.image(str(AU_LOGO), width=140)
+        if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
 
-def render_login(t):
-    st.markdown(
-        f"""
-        <div class="login-card">
-            <h2>{t["login_title"]} / System Login</h2>
-            <p>{t["login_hint"]}<br>Select your role and enter your identification code</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    with st.form("login_form"):
-        role = st.radio(
-            "身分 / Role",
-            [t["faculty"], t["student"], t["admin"]],
-            horizontal=True,
-        )
-        credential = st.text_input(
-            t["admin_password"] if role == t["admin"] else t["id_code"],
-            type="password" if role == t["admin"] else "default",
-        )
+def footer():
+    st.markdown('<div class="footer">Asia University Department of Psychology<br>© 2026 AU-PCRS Enterprise</div>', unsafe_allow_html=True)
+
+
+def login(t):
+    st.markdown(f'<div class="login-card"><h2>{t["login_title"]} / System Login</h2></div>', unsafe_allow_html=True)
+    roles = [t["faculty"], t["student"], t["admin"]]
+    with st.form("login"):
+        role = st.radio("身分 / Role", roles, horizontal=True)
+        credential = st.text_input(t["admin_password"] if role==t["admin"] else t["id_code"], type="password" if role==t["admin"] else "default")
         submitted = st.form_submit_button(t["login"], use_container_width=True)
-
     if submitted:
         if role == t["admin"]:
-            if credential and credential == get_admin_password():
-                st.session_state.user = {
-                    "user_type": "管理員",
-                    "name": "Administrator",
-                    "identification_code": "ADMIN",
-                    "email": "",
-                }
-                st.session_state.is_admin = True
-                record_login("管理員", "ADMIN", "Administrator", True)
+            if credential == admin_password():
+                st.session_state.user={"user_type":"管理員","name":"Administrator","identification_code":"ADMIN","email":""}
+                st.session_state.admin=True
+                record_login("管理員","ADMIN","Administrator",True)
                 st.rerun()
             st.error(t["invalid_admin"])
         else:
-            user_type = "教師" if role == t["faculty"] else "學生"
-            user = verify_authorized_user_by_code(user_type, credential)
+            kind = "教師" if role==t["faculty"] else "學生"
+            user = verify_authorized_user_by_code(kind, credential)
             if user:
-                st.session_state.user = user
-                st.session_state.is_admin = False
-                record_login(
-                    user["user_type"],
-                    user["identification_code"],
-                    user["name"],
-                    True,
-                )
+                st.session_state.user=user; st.session_state.admin=False
+                record_login(user["user_type"],user["identification_code"],user["name"],True)
                 st.rerun()
             st.error(t["invalid_user"])
     st.caption(t["privacy"])
 
 
-def render_home():
-    counts = get_dashboard_counts()
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Faculty / 教師", counts["teachers"])
-    c2.metric("Students / 學生", counts["students"])
-    c3.metric("Active / 有效借用", counts["active_bookings"])
-    c4.metric("Rooms / 教室", len(ROOMS))
+def announcements_block():
+    items = get_announcements(active_only=True)
+    if items:
+        st.markdown("### 最新公告 / Announcements")
+        for item in items:
+            st.markdown(f'<div class="announcement"><b>{item["title"]}</b><br>{item["content"]}</div>', unsafe_allow_html=True)
 
+
+def home(t):
+    announcements_block()
+    counts = get_dashboard_counts()
+    cols = st.columns(5)
+    cols[0].metric("Faculty / 教師", counts["teachers"])
+    cols[1].metric("Students / 學生", counts["students"])
+    cols[2].metric("Today / 今日", counts["today"])
+    cols[3].metric("Pending / 待審核", counts["pending"])
+    cols[4].metric("Active / 有效", counts["active_bookings"])
     period = get_active_open_period()
     if period:
-        st.success(
-            f'{period["semester"]}｜{period["start_date"]}～{period["end_date"]}'
-        )
+        st.success(f'{period["semester"]}｜{period["start_date"]}～{period["end_date"]}')
     else:
         st.warning("No active reservation period / 尚未設定開放期間")
 
-    ok, message = database_health_check()
-    if ok:
-        st.info(f"✅ Database: {message}")
-    else:
-        st.error(f"❌ Database: {message}")
 
-
-
-def render_user_dashboard(t):
+def my_bookings(t):
     user = st.session_state.user
-    my_rows = get_user_bookings(
-        user["user_type"],
-        user["identification_code"],
-        limit=200,
-    )
-    today_text = str(date.today())
-    today_rows = [
-        row for row in my_rows
-        if str(row["booking_date"]) == today_text and row["status"] == "有效"
-    ]
-    upcoming_rows = [
-        row for row in my_rows
-        if str(row["booking_date"]) >= today_text and row["status"] == "有效"
-    ]
-
-    st.markdown(
-        f"""
-        <div class="user-hero">
-            <div class="user-hero-title">
-                {t["welcome"]}，{user["name"]}
-            </div>
-            <div class="user-hero-sub">
-                {user["user_type"]}｜{user["identification_code"]}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric(t["my_bookings"], len(my_rows))
-    c2.metric(t["today_bookings"], len(today_rows))
-    c3.metric(t["upcoming_bookings"], len(upcoming_rows))
-
+    rows = get_user_bookings(user["user_type"], user["identification_code"])
     st.markdown(f"## {t['my_bookings']}")
-    if my_rows:
-        view = pd.DataFrame(my_rows)[
-            [
-                "booking_id",
-                "booking_date",
-                "start_time",
-                "end_time",
-                "room",
-                "reason",
-                "status",
-            ]
-        ]
-        view.columns = [
-            "ID / 編號",
-            "Date / 日期",
-            "Start / 開始",
-            "End / 結束",
-            "Room / 教室",
-            "Purpose / 用途",
-            "Status / 狀態",
-        ]
-        st.dataframe(view, use_container_width=True, hide_index=True)
-    else:
-        st.info(t["no_my_bookings"])
+    if not rows:
+        st.info("No reservations / 目前尚無借用紀錄")
+        return
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    selected = st.selectbox("Reservation ID / 借用編號", [r["booking_id"] for r in rows])
+    item = get_booking_by_id(selected)
+    c1,c2 = st.columns(2)
+    c1.download_button("下載 PDF / Download PDF", booking_pdf(item), f"{selected}.pdf", "application/pdf")
+    c2.download_button("下載 QR Code", booking_qr_png(item), f"{selected}.png", "image/png")
+    if item["status"] in {"待審核","已核准","有效"}:
+        reason = st.text_input("取消原因 / Cancellation reason")
+        if st.button("取消借用 / Cancel"):
+            if reason.strip():
+                cancel_booking(selected, reason.strip())
+                send_booking_email(item["email"], "AU-PCRS Cancellation", f"Your reservation {selected} has been cancelled.")
+                st.rerun()
+            else:
+                st.error("請輸入取消原因。")
 
 
-def render_reservation(t):
+def reserve(t):
     user = st.session_state.user
-    st.success(f'{user["name"]}（{user["user_type"]}）')
-
-    with st.form("booking_form"):
-        left, right = st.columns(2)
-        with left:
-            booking_date = st.date_input(
-                t["date"], value=date.today(), min_value=date.today()
-            )
-            room = st.selectbox(t["room"], ROOMS)
-            start_time = st.selectbox(t["start"], [s for s, _ in TIME_SLOTS])
-            end_time = st.selectbox(t["end"], [e for _, e in TIME_SLOTS])
-        with right:
+    rooms = [r["room_name"] for r in get_classrooms(active_only=True)]
+    with st.form("reserve"):
+        a,b = st.columns(2)
+        with a:
+            booking_date = st.date_input(t["date"], value=date.today(), min_value=date.today())
+            room = st.selectbox(t["room"], rooms)
+            start = st.selectbox(t["start"], [s for s,_ in TIME_SLOTS])
+            end = st.selectbox(t["end"], [e for _,e in TIME_SLOTS])
+        with b:
             phone = st.text_input(t["phone"])
             email = st.text_input(t["email"], value=user.get("email") or "")
             reason = st.text_area(t["reason"])
-
         submitted = st.form_submit_button(t["submit"], use_container_width=True)
-
-    if not submitted:
-        return
-
+    if not submitted: return
     if not phone.strip() or not email.strip() or not reason.strip():
-        st.error("Please complete all required fields / 請完整填寫必填欄位")
-        return
-    if not valid_phone(phone) or not valid_email(email) or start_time >= end_time:
-        st.error("Invalid input / 輸入格式不正確")
-        return
-
+        st.error("請完整填寫必填欄位。"); return
+    if not valid_email(email) or not valid_phone(phone) or start >= end:
+        st.error("輸入格式不正確。"); return
     period = get_active_open_period()
-    if not period or not (
-        str(period["start_date"]) <= str(booking_date) <= str(period["end_date"])
-    ):
-        st.error("Outside reservation period / 不在開放期間")
-        return
-
-    conflict = check_booking_conflict(
-        str(booking_date), room, start_time, end_time
-    )
+    if not period or not (str(period["start_date"]) <= str(booking_date) <= str(period["end_date"])):
+        st.error("不在開放借用期間。"); return
+    max_days = int(get_setting("max_days_ahead","180"))
+    if booking_date > date.today() + timedelta(days=max_days):
+        st.error(f"最多只能預約未來 {max_days} 天。"); return
+    conflict = check_booking_conflict(str(booking_date),room,start,end)
     if conflict:
-        st.error("Time conflict / 時段衝突")
-        st.caption(conflict["detail"])
-        return
-
-    booking_id = create_booking(
-        str(booking_date),
-        room,
-        start_time,
-        end_time,
-        user["user_type"],
-        user["name"],
-        user["identification_code"],
-        phone.strip(),
-        email.strip(),
-        reason.strip(),
+        st.error("無法借用：時段衝突或停借。"); st.caption(conflict["detail"]); return
+    booking_id,status = create_booking(
+        str(booking_date),room,start,end,user["user_type"],user["name"],
+        user["identification_code"],phone.strip(),email.strip(),reason.strip()
     )
-    st.success(f"Reservation ID / 借用編號：{booking_id}")
+    st.success(f"借用編號：{booking_id}｜狀態：{status}")
+    send_booking_email(email, "AU-PCRS Reservation", f"Reservation {booking_id} submitted. Status: {status}")
 
 
-def render_query(t):
-    left, right = st.columns(2)
-    with left:
-        query_date = st.date_input(t["date"], value=date.today(), key="query_date")
-    with right:
-        query_room = st.selectbox(t["room"], ROOMS, key="query_room")
-
-    courses = get_course_blocks(str(query_date), query_room)
-    bookings = [
-        row for row in get_all_bookings()
-        if str(row["booking_date"]) == str(query_date)
-        and row["room"] == query_room
-        and row["status"] == "有效"
-    ]
-
-    output = []
-    for start, end in TIME_SLOTS:
-        status, detail = t["available"], ""
+def calendar_view(t):
+    rooms = [r["room_name"] for r in get_classrooms(active_only=True)]
+    a,b = st.columns(2)
+    with a: day = st.date_input(t["date"], value=date.today(), key="calendar_day")
+    with b: room = st.selectbox(t["room"], rooms, key="calendar_room")
+    courses = get_course_blocks(str(day), room)
+    bookings = [r for r in get_all_bookings({"room":room,"date_from":str(day),"date_to":str(day)}) if r["status"] in {"待審核","已核准","有效"}]
+    output=[]
+    for start,end in TIME_SLOTS:
+        status,detail=t["available"],""
         for course in courses:
-            if (
-                start < str(course["end_time"])[:5]
-                and end > str(course["start_time"])[:5]
-            ):
-                status, detail = t["course"], course["course_name"]
-                break
-        if status == t["available"]:
+            if start < str(course["end_time"])[:5] and end > str(course["start_time"])[:5]:
+                status,detail=t["course"],course["course_name"]; break
+        if status==t["available"]:
             for booking in bookings:
-                if (
-                    start < str(booking["end_time"])[:5]
-                    and end > str(booking["start_time"])[:5]
-                ):
-                    status, detail = t["reserved"], ""
-                    break
-        output.append(
-            {
-                "Time / 時間": f"{start}–{end}",
-                "Status / 狀態": status,
-                "Detail / 說明": detail,
-            }
-        )
-    st.dataframe(pd.DataFrame(output), use_container_width=True, hide_index=True)
+                if start < str(booking["end_time"])[:5] and end > str(booking["start_time"])[:5]:
+                    status,detail=t["reserved"],booking["status"]; break
+        output.append({"Time / 時間":f"{start}–{end}","Status / 狀態":status,"Detail / 說明":detail})
+    st.dataframe(pd.DataFrame(output),use_container_width=True,hide_index=True)
 
 
-def render_admin():
-    tabs = st.tabs(
-        [
-            "Dashboard",
-            "Roster / 名冊",
-            "Open Period / 開放期間",
-            "Schedule / 課表",
-            "Bookings / 借用管理",
-            "Audit / 操作紀錄",
-        ]
-    )
-
-    with tabs[0]:
-        render_home()
-
+def admin_panel():
+    tabs=st.tabs(["Dashboard","Roster / 名冊","Classrooms / 教室","Open Period / 開放期間","Schedule / 課表","Booking Review / 借用審核","Announcements / 公告","Closures / 停借","Settings / 設定","Audit / 操作紀錄"])
+    with tabs[0]: home(TEXT[st.session_state.language])
     with tabs[1]:
-        st.markdown("## 教師／學生名冊管理")
-        user_type = st.radio("名冊類別", ["教師", "學生"], horizontal=True)
-
-        template_name = (
-            "教師名冊範本.xlsx" if user_type == "教師" else "學生名冊範本.xlsx"
-        )
-        st.download_button(
-            "下載名冊 Excel 範本",
-            data=roster_template_bytes(user_type),
-            file_name=template_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
-        upload = st.file_uploader(
-            "上傳 Excel 名冊",
-            type=["xlsx"],
-            key=f"roster_upload_{user_type}",
-            help="必要欄位：教師職編或學生學號、姓名；Email與狀態可省略。",
-        )
-        replace = st.radio(
-            "匯入模式",
-            ["合併更新", f"覆蓋{user_type}名冊"],
-            horizontal=True,
-        )
-
+        kind=st.radio("名冊類別",["教師","學生"],horizontal=True)
+        st.download_button("下載範本",roster_template_bytes(kind),f"{kind}名冊範本.xlsx")
+        upload=st.file_uploader("上傳 Excel",type=["xlsx"],key=f"roster_{kind}")
+        mode=st.radio("匯入模式",["合併更新","覆蓋名冊"],horizontal=True)
         if upload is not None:
-            preview = pd.read_excel(upload, dtype=str).fillna("")
-            st.caption("匯入預覽")
-            st.dataframe(preview.head(30), use_container_width=True, hide_index=True)
-
-        if st.button("開始匯入名冊", type="primary"):
-            if upload is None:
-                st.error("請先選擇 Excel 檔案。")
+            preview=pd.read_excel(upload,dtype=str).fillna("")
+            st.dataframe(preview.head(30),use_container_width=True,hide_index=True)
+        if st.button("開始匯入"):
+            if upload is None: st.error("請選擇檔案")
             else:
-                result = import_authorized_users(
-                    pd.read_excel(upload, dtype=str).fillna(""),
-                    user_type,
-                    replace.startswith("覆蓋"),
-                )
-                st.success(
-                    f'匯入完成：新增 {result["inserted"]}、'
-                    f'更新 {result["updated"]}、略過 {result["skipped"]}'
-                )
-                st.rerun()
-
-        rows = get_all_authorized_users()
-        summary = roster_summary(rows)
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("教師", summary["teachers"])
-        c2.metric("學生", summary["students"])
-        c3.metric("啟用", summary["active"])
-        c4.metric("停用", summary["inactive"])
-
+                result=import_authorized_users(pd.read_excel(upload,dtype=str).fillna(""),kind,mode=="覆蓋名冊")
+                st.success(result); st.rerun()
+        rows=get_all_authorized_users()
         if rows:
-            roster_df = pd.DataFrame(rows)
-            st.dataframe(roster_df, use_container_width=True, hide_index=True)
-
-            export_name = f"authorized_users_{date.today()}.xlsx"
-            st.download_button(
-                "匯出全部名冊 Excel",
-                data=excel_bytes(rows, "名冊"),
-                file_name=export_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-
-            delete_type = st.selectbox(
-                "刪除名冊類別",
-                ["教師", "學生"],
-                key="delete_user_type",
-            )
-            candidates = [
-                row for row in rows if row.get("user_type") == delete_type
-            ]
-            if candidates:
-                selected_code = st.selectbox(
-                    "選擇要刪除的辨識碼",
-                    [row["identification_code"] for row in candidates],
-                )
-                confirm_delete = st.checkbox("我確認要刪除此筆名冊資料")
-                if st.button("刪除選取名冊資料"):
-                    if not confirm_delete:
-                        st.error("請先勾選確認。")
-                    else:
-                        deleted = delete_authorized_user(
-                            delete_type,
-                            selected_code,
-                        )
-                        if deleted:
-                            st.success("名冊資料已刪除。")
-                            st.rerun()
-                        else:
-                            st.warning("找不到指定資料。")
-        else:
-            st.info("目前尚未匯入教師或學生名冊。")
-
+            st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+            st.download_button("匯出名冊",excel_bytes(rows,"名冊"),f"authorized_users_{date.today()}.xlsx")
     with tabs[2]:
-        left, right = st.columns(2)
-        with left:
-            start_date = st.date_input("開始日期", value=date.today(), key="period_start")
-        with right:
-            end_date = st.date_input("結束日期", value=date.today(), key="period_end")
-        semester = st.text_input("學期", value="115-1")
-
-        if st.button("儲存並啟用"):
-            if start_date > end_date:
-                st.error("開始日期不可晚於結束日期。")
-            else:
-                save_open_period(semester, str(start_date), str(end_date))
-                st.success("已儲存")
-
+        st.markdown("## 教室管理")
+        existing=get_classrooms()
+        st.dataframe(pd.DataFrame(existing),use_container_width=True,hide_index=True)
+        room_name=st.text_input("教室名稱")
+        capacity=st.number_input("容量",min_value=1,value=40)
+        location=st.text_input("位置")
+        equipment=st.text_area("設備")
+        status=st.radio("狀態",["啟用","停用"],horizontal=True)
+        if st.button("新增或更新教室"):
+            if room_name.strip():
+                save_classroom(room_name.strip(),capacity,location,equipment,status); st.rerun()
     with tabs[3]:
-        semester = st.text_input("匯入學期", value="115-1", key="course_semester")
-        replace = st.checkbox("清除此學期既有課表")
-        upload = st.file_uploader("課表 Excel", type=["xlsx"], key="course_upload")
-
-        if upload is not None:
-            frame = pd.read_excel(upload, dtype=str).fillna("")
-            st.dataframe(frame.head(20), use_container_width=True, hide_index=True)
-            if st.button("確認匯入課表"):
-                st.success(add_course_blocks(frame, semester, replace))
-
-        semester_rows = get_course_semesters()
-        if semester_rows:
-            st.dataframe(
-                pd.DataFrame(semester_rows),
-                use_container_width=True,
-                hide_index=True,
-            )
-
+        a,b=st.columns(2)
+        with a: sd=st.date_input("開始日期",value=date.today(),key="period_sd")
+        with b: ed=st.date_input("結束日期",value=date.today(),key="period_ed")
+        semester=st.text_input("學期",value="115-1")
+        if st.button("儲存開放期間"):
+            save_open_period(semester,str(sd),str(ed)); st.success("已儲存")
     with tabs[4]:
-        rows = get_all_bookings()
-        if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-            st.download_button(
-                "匯出 Excel",
-                excel_bytes(rows, "借用紀錄"),
-                f"bookings_{date.today()}.xlsx",
-            )
-
-            booking_id = st.selectbox(
-                "借用編號", [row["booking_id"] for row in rows]
-            )
-            item = get_booking_by_id(booking_id)
-            if item:
-                cancel_reason = st.text_input("取消原因")
-                if st.button("取消借用"):
-                    if not cancel_reason.strip():
-                        st.error("請輸入取消原因")
-                    else:
-                        cancel_booking(booking_id, cancel_reason.strip())
-                        st.rerun()
-        else:
-            st.info("目前尚無借用紀錄")
-
+        semester=st.text_input("匯入學期",value="115-1",key="course_sem")
+        replace=st.checkbox("清除此學期既有課表")
+        upload=st.file_uploader("課表 Excel",type=["xlsx"],key="course_file")
+        if upload is not None:
+            frame=pd.read_excel(upload,dtype=str).fillna(""); st.dataframe(frame.head(30),use_container_width=True,hide_index=True)
+            if st.button("匯入課表"): st.success(add_course_blocks(frame,semester,replace)); st.rerun()
+        semesters=get_course_semesters()
+        if semesters: st.dataframe(pd.DataFrame(semesters),use_container_width=True,hide_index=True)
     with tabs[5]:
-        logs = get_audit_logs()
+        c1,c2,c3,c4=st.columns(4)
+        with c1: status_filter=st.selectbox("狀態",["","待審核","已核准","已退回","已取消","已完成"])
+        with c2: room_filter=st.selectbox("教室",[""]+[r["room_name"] for r in get_classrooms()])
+        with c3: df=st.date_input("起日",value=date.today()-timedelta(days=30),key="review_from")
+        with c4: dt=st.date_input("迄日",value=date.today()+timedelta(days=180),key="review_to")
+        keyword=st.text_input("關鍵字")
+        rows=get_all_bookings({"status":status_filter,"room":room_filter,"date_from":str(df),"date_to":str(dt),"keyword":keyword})
+        if rows:
+            st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+            st.download_button("匯出借用紀錄",excel_bytes(rows,"借用紀錄"),f"bookings_{date.today()}.xlsx")
+            selected=st.selectbox("借用編號",[r["booking_id"] for r in rows])
+            new_status=st.selectbox("審核結果",["已核准","已退回","已取消","已完成"])
+            note=st.text_area("審核備註")
+            if st.button("儲存審核結果"):
+                review_booking(selected,new_status,"Administrator",note)
+                item=get_booking_by_id(selected)
+                send_booking_email(item["email"],"AU-PCRS Review",f"Reservation {selected}: {new_status}\n{note}")
+                st.rerun()
+        else: st.info("查無借用紀錄")
+    with tabs[6]:
+        title=st.text_input("公告標題")
+        content=st.text_area("公告內容")
+        a,b=st.columns(2)
+        with a: sd=st.date_input("公告開始",value=date.today(),key="ann_sd")
+        with b: ed=st.date_input("公告結束",value=date.today()+timedelta(days=30),key="ann_ed")
+        if st.button("發布公告"):
+            save_announcement(title,content,str(sd),str(ed),True); st.rerun()
+        items=get_announcements()
+        if items: st.dataframe(pd.DataFrame(items),use_container_width=True,hide_index=True)
+    with tabs[7]:
+        day=st.date_input("停借日期",value=date.today(),key="closure_day")
+        room=st.selectbox("適用教室",["全部教室"]+[r["room_name"] for r in get_classrooms()])
+        reason=st.text_input("停借原因")
+        if st.button("新增停借"):
+            save_closure(str(day),"" if room=="全部教室" else room,reason); st.rerun()
+        items=get_closures()
+        if items: st.dataframe(pd.DataFrame(items),use_container_width=True,hide_index=True)
+    with tabs[8]:
+        approval=st.radio("借用審核模式",["manual","auto"],index=0 if get_setting("approval_mode","manual")=="manual" else 1,horizontal=True,format_func=lambda x:"人工審核" if x=="manual" else "自動核准")
+        max_days=st.number_input("最多可預約未來天數",min_value=1,max_value=365,value=int(get_setting("max_days_ahead","180")))
+        if st.button("儲存系統設定"):
+            set_setting("approval_mode",approval); set_setting("max_days_ahead",str(max_days)); st.success("已儲存")
+        st.caption("Email 通知需在 Streamlit Secrets 設定 [smtp]。")
+    with tabs[9]:
+        logs=get_audit_logs()
         if logs:
-            st.dataframe(pd.DataFrame(logs), use_container_width=True, hide_index=True)
-        else:
-            st.info("目前尚無操作紀錄")
+            st.dataframe(pd.DataFrame(logs),use_container_width=True,hide_index=True)
+            st.download_button("匯出操作紀錄",excel_bytes(logs,"操作紀錄"),f"audit_{date.today()}.xlsx")
 
 
-
-def render_footer():
-    st.markdown(
-        """
-        <div class="footer">
-            Asia University Department of Psychology<br>
-            © 2026 AU-PCRS Cloud System
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-st.set_page_config(page_title="AU-PCRS", layout="wide")
+st.set_page_config(page_title="AU-PCRS V4.0",layout="wide")
 apply_style()
-
-for key, default in {
-    "language": "中文",
-    "user": None,
-    "is_admin": False,
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
-
-try:
-    init_db()
+for key,default in {"language":"中文","user":None,"admin":False}.items():
+    if key not in st.session_state: st.session_state[key]=default
+try: init_db()
 except Exception as exc:
-    st.error("Database initialization failed / 資料庫初始化失敗")
-    st.caption(str(exc))
-    st.stop()
+    st.error("Database initialization failed / 資料庫初始化失敗"); st.caption(str(exc)); st.stop()
 
-language = st.sidebar.selectbox(
-    "語言 / Language",
-    ["中文", "English"],
-    index=0 if st.session_state.language == "中文" else 1,
-)
-st.session_state.language = language
-t = TEXT[language]
-render_header(t)
+language=st.sidebar.selectbox("語言 / Language",["中文","English"],index=0 if st.session_state.language=="中文" else 1)
+st.session_state.language=language
+t=TEXT[language]
+header(t)
 
 if st.session_state.user is None:
-    render_login(t)
-    render_footer()
-    st.stop()
+    login(t); footer(); st.stop()
 
 with st.sidebar:
     st.markdown(f'### {st.session_state.user["name"]}')
-    if st.button(t["logout"], use_container_width=True):
-        current_user = st.session_state.user
-        record_logout(
-            current_user["user_type"],
-            current_user["identification_code"],
-            current_user["name"],
-        )
-        st.session_state.user = None
-        st.session_state.is_admin = False
-        st.rerun()
+    if st.button(t["logout"],use_container_width=True):
+        u=st.session_state.user
+        record_logout(u["user_type"],u["identification_code"],u["name"])
+        st.session_state.user=None; st.session_state.admin=False; st.rerun()
 
-page = st.sidebar.radio(
-    "Menu / 選單",
-    [t["home"], t["admin_panel"]]
-    if st.session_state.is_admin
-    else [t["home"], t["my_bookings"], t["reserve"], t["query"]],
+page=st.sidebar.radio("Menu / 選單",
+    [t["home"],t["admin_panel"]] if st.session_state.admin
+    else [t["home"],t["my_bookings"],t["reserve"],t["calendar"]]
 )
 
-if page == t["home"]:
-    render_home()
-elif page == t["reserve"]:
-    render_reservation(t)
-elif page == t["query"]:
-    render_query(t)
-else:
-    render_admin()
-
-render_footer()
+if page==t["home"]: home(t)
+elif page==t["my_bookings"]: my_bookings(t)
+elif page==t["reserve"]: reserve(t)
+elif page==t["calendar"]: calendar_view(t)
+else: admin_panel()
+footer()

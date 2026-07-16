@@ -1,21 +1,44 @@
-# AU-PCRS V3.1 Enterprise
+# AU-PCRS V4.0 Enterprise
 
-## 本版重點
-- 管理員可下載教師／學生名冊 Excel 範本
-- 管理員可上傳 Excel 匯入名冊
-- 支援教師職編、學生學號等多種欄位名稱
-- 可選擇合併更新或覆蓋指定名冊
-- 匯入前預覽資料
-- 顯示新增、更新、略過筆數
-- 顯示教師、學生、啟用、停用統計
-- 可匯出全部名冊 Excel
-- 可刪除指定名冊資料
-- 教師／學生登入會直接使用 authorized_users 資料表
-- 保留 Supabase、雙語登入、個人 Dashboard、借用、查詢及管理後台
+## 主要功能
+- 教師、學生、管理員登入
+- Excel 名冊匯入／匯出
+- 教室管理：容量、位置、設備、啟用／停用
+- 開放借用期間
+- 課表匯入與衝突檢查
+- 停借日期與特定教室停借
+- 人工審核或自動核准模式
+- 借用審核：核准、退回、取消、完成
+- 公告管理
+- 教室行事曆
+- 個人借用紀錄
+- QR Code 與 PDF 借用證明
+- Excel 報表
+- 操作紀錄
+- 選配 SMTP Email 通知
+- Supabase PostgreSQL + Streamlit Cloud
 
-## 部署方式
-1. 解壓縮 ZIP。
-2. 覆蓋 GitHub Repository 根目錄檔案。
-3. Commit changes。
-4. 等待 Streamlit Cloud 自動重新部署。
-5. 以管理員登入後，進入「Roster / 名冊」匯入教師與學生名冊。
+## Streamlit Secrets
+
+```toml
+[database]
+host = "aws-0-ap-northeast-1.pooler.supabase.com"
+port = 5432
+name = "postgres"
+user = "postgres.PROJECT_REF"
+password = "DATABASE_PASSWORD"
+
+ADMIN_PASSWORD = "ADMIN_PASSWORD"
+
+# Optional email notifications
+[smtp]
+host = "smtp.gmail.com"
+port = 465
+username = "your_account@gmail.com"
+password = "APP_PASSWORD"
+from_email = "your_account@gmail.com"
+```
+
+## 部署
+將本專案內容覆蓋到 GitHub Repository 根目錄，Commit 後等待 Streamlit Cloud 自動重新部署。
+首次啟動會自動建立 V4.0 新資料表並補上 bookings 新欄位。

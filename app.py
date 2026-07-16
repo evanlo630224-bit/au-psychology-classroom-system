@@ -22,8 +22,11 @@ from database import (
     get_course_blocks,
     get_course_semesters,
     get_dashboard_counts,
+    get_user_bookings,
     import_authorized_users,
     init_db,
+    record_login,
+    record_logout,
     save_open_period,
     set_course_semester_active,
     update_booking,
@@ -216,6 +219,22 @@ def apply_style():
             color:#756F88;
             margin:0;
         }
+        .user-hero {
+            padding:1.15rem 1.3rem;
+            border-radius:18px;
+            background:linear-gradient(135deg,#F3EFFF,#FFFFFF);
+            border:1px solid #E4DCFF;
+            margin-bottom:1rem;
+        }
+        .user-hero-title {
+            font-size:1.35rem;
+            font-weight:800;
+            color:#2F1A96;
+        }
+        .user-hero-sub {
+            color:#726C84;
+            margin-top:.25rem;
+        }
         .footer {
             margin-top:2.5rem;
             padding:1.2rem;
@@ -246,7 +265,7 @@ def render_header(t):
                 <div class="title1">{t["title1"]}</div>
                 <div class="title2">{t["title2"]}</div>
                 <div class="subtitle">{t["subtitle"]}</div>
-                <div class="pill">AU-PCRS V2.2 Professional</div>
+                <div class="pill">AU-PCRS V3.0.1 Login</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -288,6 +307,7 @@ def render_login(t):
                     "email": "",
                 }
                 st.session_state.is_admin = True
+                record_login("管理員", "ADMIN", "Administrator", True)
                 st.rerun()
             st.error(t["invalid_admin"])
         else:
@@ -296,6 +316,12 @@ def render_login(t):
             if user:
                 st.session_state.user = user
                 st.session_state.is_admin = False
+                record_login(
+                    user["user_type"],
+                    user["identification_code"],
+                    user["name"],
+                    True,
+                )
                 st.rerun()
             st.error(t["invalid_user"])
     st.caption(t["privacy"])
@@ -322,6 +348,70 @@ def render_home():
         st.info(f"✅ Database: {message}")
     else:
         st.error(f"❌ Database: {message}")
+
+
+
+def render_user_dashboard(t):
+    user = st.session_state.user
+    my_rows = get_user_bookings(
+        user["user_type"],
+        user["identification_code"],
+        limit=200,
+    )
+    today_text = str(date.today())
+    today_rows = [
+        row for row in my_rows
+        if str(row["booking_date"]) == today_text and row["status"] == "有效"
+    ]
+    upcoming_rows = [
+        row for row in my_rows
+        if str(row["booking_date"]) >= today_text and row["status"] == "有效"
+    ]
+
+    st.markdown(
+        f"""
+        <div class="user-hero">
+            <div class="user-hero-title">
+                {t["welcome"]}，{user["name"]}
+            </div>
+            <div class="user-hero-sub">
+                {user["user_type"]}｜{user["identification_code"]}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric(t["my_bookings"], len(my_rows))
+    c2.metric(t["today_bookings"], len(today_rows))
+    c3.metric(t["upcoming_bookings"], len(upcoming_rows))
+
+    st.markdown(f"## {t['my_bookings']}")
+    if my_rows:
+        view = pd.DataFrame(my_rows)[
+            [
+                "booking_id",
+                "booking_date",
+                "start_time",
+                "end_time",
+                "room",
+                "reason",
+                "status",
+            ]
+        ]
+        view.columns = [
+            "ID / 編號",
+            "Date / 日期",
+            "Start / 開始",
+            "End / 結束",
+            "Room / 教室",
+            "Purpose / 用途",
+            "Status / 狀態",
+        ]
+        st.dataframe(view, use_container_width=True, hide_index=True)
+    else:
+        st.info(t["no_my_bookings"])
 
 
 def render_reservation(t):
@@ -579,6 +669,12 @@ if st.session_state.user is None:
 with st.sidebar:
     st.markdown(f'### {st.session_state.user["name"]}')
     if st.button(t["logout"], use_container_width=True):
+        current_user = st.session_state.user
+        record_logout(
+            current_user["user_type"],
+            current_user["identification_code"],
+            current_user["name"],
+        )
         st.session_state.user = None
         st.session_state.is_admin = False
         st.rerun()
@@ -587,7 +683,7 @@ page = st.sidebar.radio(
     "Menu / 選單",
     [t["home"], t["admin_panel"]]
     if st.session_state.is_admin
-    else [t["home"], t["reserve"], t["query"]],
+    else [t["home"], t["my_bookings"], t["reserve"], t["query"]],
 )
 
 if page == t["home"]:

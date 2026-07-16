@@ -596,6 +596,43 @@ def create_booking(
     return booking_id
 
 
+
+def get_user_bookings(user_type, identification_code, limit=100):
+    safe_limit = max(1, min(int(limit), 1000))
+    statement = (
+        select(bookings)
+        .where(
+            and_(
+                bookings.c.applicant_type == user_type,
+                bookings.c.identification_code == identification_code,
+            )
+        )
+        .order_by(bookings.c.booking_date.desc(), bookings.c.start_time.desc())
+        .limit(safe_limit)
+    )
+    with engine.connect() as connection:
+        return rows(connection.execute(statement))
+
+
+def record_login(user_type, identification_code, name, success=True):
+    detail = f"name={name}; success={success}"
+    log_action(
+        "LOGIN_SUCCESS" if success else "LOGIN_FAILED",
+        "user",
+        f"{user_type}:{identification_code}",
+        detail,
+    )
+
+
+def record_logout(user_type, identification_code, name):
+    log_action(
+        "LOGOUT",
+        "user",
+        f"{user_type}:{identification_code}",
+        f"name={name}",
+    )
+
+
 def get_all_bookings():
     statement = select(bookings).order_by(
         bookings.c.booking_date.desc(),

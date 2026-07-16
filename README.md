@@ -1,15 +1,14 @@
-# AU-PCRS V2.2 Professional
+# AU-PCRS V3.0.1 Login
 
-本版不整合校內認證，保留教師職編、學生學號及管理員密碼登入。
+## 本版重點
+- 教師、學生、管理員實際登入
+- 教師以職編、學生以學號驗證
+- 管理員使用 Streamlit Secrets 密碼
+- 登入與登出操作紀錄
+- 教師／學生專屬「我的借用」Dashboard
+- 今日借用、即將到來與全部借用統計
+- 中英文介面
+- 保留 Supabase、教室借用、查詢與管理後台
 
-## 更新內容
-- 修正側邊欄語言選單空白
-- 中英文登入介面
-- 放大心理學系 Logo
-- 登入區置中及卡片化
-- 新增頁尾
-- 保留 Supabase、借用、查詢、名冊、課表與管理後台
-
-## 更新方式
-將 ZIP 內檔案覆蓋至 GitHub Repository 根目錄並 Commit。
-Streamlit Cloud 會自動重新部署。
+## 部署
+解壓縮後覆蓋 GitHub Repository 根目錄，Commit 後 Streamlit Cloud 會自動重新部署。

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 import os
 from pathlib import Path
 from typing import Any
@@ -703,6 +703,162 @@ def delete_announcement(announcement_id):
             announcements.c.id == int(announcement_id)
         ))
     return result.rowcount or 0
+
+
+
+def get_room_statuses(target_date=None, current_time=None):
+    target_date = as_date(target_date or date.today())
+    current_time = as_time(current_time or datetime.now().strftime("%H:%M"))
+    result = []
+
+    for room_row in get_classrooms(active_only=True):
+        room_name = room_row["room_name"]
+        status = "可借用"
+        detail = ""
+        start_value = None
+        end_value = None
+
+        closure = get_closure_for(target_date, room_name)
+        if closure:
+            status = "停借"
+            detail = closure["reason"]
+        else:
+            for course in get_course_blocks(target_date, room_name):
+                if course["start_time"] <= current_time < course["end_time"]:
+                    status = "上課中"
+                    detail = course["course_name"]
+                    start_value = course["start_time"]
+                    end_value = course["end_time"]
+                    break
+
+            if status == "可借用":
+                with engine.connect() as conn:
+                    booking = conn.execute(
+                        select(bookings).where(
+                            and_(
+                                bookings.c.booking_date == target_date,
+                                bookings.c.room == room_name,
+                                bookings.c.status.in_(["待審核", "已核准", "有效"]),
+                                bookings.c.start_time <= current_time,
+                                bookings.c.end_time > current_time,
+                            )
+                        ).order_by(bookings.c.start_time).limit(1)
+                    ).first()
+
+                if booking:
+                    booking_row = dict(booking._mapping)
+                    status = "使用中"
+                    detail = booking_row["applicant_name"]
+                    start_value = booking_row["start_time"]
+                    end_value = booking_row["end_time"]
+
+        result.append({
+            "room_name": room_name,
+            "capacity": room_row.get("capacity"),
+            "status": status,
+            "detail": detail,
+            "start_time": start_value,
+            "end_time": end_value,
+        })
+
+    return result
+
+
+def get_booking_statistics(days=30):
+    days = max(1, min(int(days), 3650))
+    first_day = date.today() - timedelta(days=days - 1)
+
+    with engine.connect() as conn:
+        booking_rows = rows(
+            conn.execute(
+                select(bookings).where(bookings.c.booking_date >= first_day)
+            )
+        )
+
+    by_room = {}
+    by_date = {}
+    by_status = {}
+
+    for row in booking_rows:
+        room_name = row["room"]
+        booking_day = str(row["booking_date"])
+        status = row["status"]
+        by_room[room_name] = by_room.get(room_name, 0) + 1
+        by_date[booking_day] = by_date.get(booking_day, 0) + 1
+        by_status[status] = by_status.get(status, 0) + 1
+
+    return {
+        "total": len(booking_rows),
+        "approved": sum(
+            by_status.get(value, 0)
+            for value in ["已核准", "有效", "已完成"]
+        ),
+        "pending": by_status.get("待審核", 0),
+        "cancelled": by_status.get("已取消", 0) + by_status.get("已退回", 0),
+        "by_room": [
+            {"room": key, "count": value}
+            for key, value in sorted(
+                by_room.items(), key=lambda item: item[1], reverse=True
+            )
+        ],
+        "by_date": [
+            {"date": key, "count": value}
+            for key, value in sorted(by_date.items())
+        ],
+        "by_status": [
+            {"status": key, "count": value}
+            for key, value in sorted(
+                by_status.items(), key=lambda item: item[1], reverse=True
+            )
+        ],
+    }
+
+
+def get_week_schedule(start_date, room):
+    start_date = as_date(start_date)
+    end_date = start_date + timedelta(days=6)
+
+    with engine.connect() as conn:
+        booking_rows = rows(
+            conn.execute(
+                select(bookings).where(
+                    and_(
+                        bookings.c.room == room,
+                        bookings.c.booking_date >= start_date,
+                        bookings.c.booking_date <= end_date,
+                        bookings.c.status.in_(["待審核", "已核准", "有效"]),
+                    )
+                ).order_by(bookings.c.booking_date, bookings.c.start_time)
+            )
+        )
+
+    items = []
+    for offset in range(7):
+        day = start_date + timedelta(days=offset)
+        for course in get_course_blocks(day, room):
+            items.append({
+                "date": str(day),
+                "start_time": str(course["start_time"])[:5],
+                "end_time": str(course["end_time"])[:5],
+                "type": "課程",
+                "title": course["course_name"],
+                "status": "已排課",
+            })
+
+    for row in booking_rows:
+        items.append({
+            "date": str(row["booking_date"]),
+            "start_time": str(row["start_time"])[:5],
+            "end_time": str(row["end_time"])[:5],
+            "type": "借用",
+            "title": row["applicant_name"],
+            "status": row["status"],
+        })
+
+    return sorted(
+        items,
+        key=lambda item: (item["date"], item["start_time"], item["end_time"]),
+    )
 
 
 def get_dashboard_counts():

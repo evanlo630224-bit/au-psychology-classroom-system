@@ -14,7 +14,7 @@ from database import (
     get_active_open_period, get_all_authorized_users, get_all_bookings,
     get_announcements, get_audit_logs, get_booking_by_id, get_classrooms,
     get_closures, get_course_blocks, get_course_semesters, get_dashboard_counts,
-    get_setting, get_user_bookings, import_authorized_users, init_db,
+    get_setting, get_user_bookings, get_room_statuses, get_booking_statistics, get_week_schedule, import_authorized_users, init_db,
     record_login, record_logout, review_booking, save_announcement,
     save_classroom, save_closure, save_open_period, set_course_semester_active,
     set_setting, verify_authorized_user_by_code,
@@ -41,7 +41,7 @@ TEXT = {
         "login_title":"系統登入","faculty":"教師","student":"學生","admin":"管理員",
         "id_code":"教師職編／學生學號","admin_password":"管理員密碼",
         "login":"登入","logout":"登出","home":"首頁","my_bookings":"我的借用",
-        "reserve":"我要借教室","calendar":"教室行事曆","admin_panel":"管理員後台",
+        "reserve":"我要借教室","calendar":"教室行事曆","weekly":"視覺化週課表","admin_panel":"管理員後台",
         "invalid_user":"身分驗證失敗，請確認名冊與辨識碼。","invalid_admin":"管理員密碼錯誤。",
         "date":"借用日期","room":"教室","start":"開始時間","end":"結束時間",
         "phone":"聯絡手機","email":"聯絡信箱","reason":"借用事由","submit":"送出申請",
@@ -56,7 +56,7 @@ TEXT = {
         "login_title":"System Login","faculty":"Faculty","student":"Student","admin":"Administrator",
         "id_code":"Employee ID / Student ID","admin_password":"Administrator Password",
         "login":"Log In","logout":"Log Out","home":"Home","my_bookings":"My Reservations",
-        "reserve":"Reserve a Classroom","calendar":"Classroom Calendar","admin_panel":"Admin Panel",
+        "reserve":"Reserve a Classroom","calendar":"Classroom Calendar","weekly":"Weekly Schedule","admin_panel":"Admin Panel",
         "invalid_user":"Identity verification failed. Please check the roster and code.",
         "invalid_admin":"Incorrect administrator password.","date":"Reservation Date",
         "room":"Classroom","start":"Start Time","end":"End Time","phone":"Mobile Phone",
@@ -157,6 +157,16 @@ def apply_style():
     .sub{margin-top:9px;color:#6d6781}.pill{display:inline-block;margin-top:10px;padding:5px 12px;border-radius:999px;background:#ece7ff;color:#35188e;font-weight:700}
     .login-card,.panel{padding:1.4rem;border:1px solid #e5dfff;border-radius:18px;background:#fff;box-shadow:0 10px 28px rgba(75,43,215,.07)}
     .announcement{padding:.85rem 1rem;border-left:5px solid #4B2BD7;background:#F6F3FF;border-radius:10px;margin-bottom:.6rem}
+    .room-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin:12px 0 24px 0}
+    .room-v5{padding:18px;border:1px solid #e5dfff;border-radius:18px;background:white;box-shadow:0 8px 22px rgba(75,43,215,.06)}
+    .room-v5-name{font-size:1.25rem;font-weight:800;color:#35188E}
+    .room-v5-status{font-weight:750;margin-top:10px}
+    .status-free{color:#14833B}.status-busy{color:#E06700}.status-course{color:#1768D8}.status-closed{color:#C62828}
+    .kpi-note{font-size:.86rem;color:#777184;margin-top:4px}
+    @media (max-width:768px){
+      .hero{padding:16px}.h1{font-size:1.7rem}.h2{font-size:1.35rem}
+      .room-grid{grid-template-columns:1fr}
+    }
     div[data-testid=stMetric]{border:1px solid #e5dfff;border-radius:16px;padding:14px;background:#fff;box-shadow:0 8px 22px rgba(75,43,215,.06)}
     .stButton>button,.stFormSubmitButton>button,.stDownloadButton>button{border-radius:12px;font-weight:700}
     .footer{margin-top:2rem;padding:1rem;border-top:1px solid #e5dfff;color:#777;text-align:center}
@@ -169,7 +179,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V4.1.1 Enterprise Stable</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V5.0 Enterprise</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -212,6 +222,147 @@ def announcements_block():
             st.markdown(f'<div class="announcement"><b>{item["title"]}</b><br>{item["content"]}</div>', unsafe_allow_html=True)
 
 
+
+def room_status_dashboard():
+    st.markdown("### 教室即時狀態 / Live Classroom Status")
+    room_rows = get_room_statuses()
+    if not room_rows:
+        st.info("目前沒有啟用中的教室。")
+        return
+
+    class_map = {
+        "可借用": "status-free",
+        "使用中": "status-busy",
+        "上課中": "status-course",
+        "停借": "status-closed",
+    }
+    parts = ['<div class="room-grid">']
+
+    for row in room_rows:
+        status_class = class_map.get(row["status"], "status-busy")
+        time_text = ""
+        if row.get("start_time") and row.get("end_time"):
+            time_text = (
+                '<div class="kpi-note">'
+                + str(row["start_time"])[:5]
+                + "–"
+                + str(row["end_time"])[:5]
+                + "</div>"
+            )
+
+        detail_text = ""
+        if row.get("detail"):
+            detail_text = (
+                '<div class="kpi-note">'
+                + str(row["detail"])
+                + "</div>"
+            )
+
+        parts.append(
+            '<div class="room-v5">'
+            + '<div class="room-v5-name">'
+            + str(row["room_name"])
+            + "</div>"
+            + '<div class="room-v5-status '
+            + status_class
+            + '">'
+            + str(row["status"])
+            + "</div>"
+            + time_text
+            + detail_text
+            + "</div>"
+        )
+
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
+def analytics_dashboard():
+    st.markdown("### 使用統計 / Usage Analytics")
+    period_days = st.selectbox(
+        "統計期間",
+        [7, 30, 90, 180, 365],
+        index=1,
+        format_func=lambda value: f"最近 {value} 天",
+        key="analytics_days",
+    )
+    stats = get_booking_statistics(period_days)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("總申請 / Total", stats["total"])
+    c2.metric("已核准 / Approved", stats["approved"])
+    c3.metric("待審核 / Pending", stats["pending"])
+    c4.metric("取消或退回 / Cancelled", stats["cancelled"])
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("#### 熱門教室")
+        if stats["by_room"]:
+            st.bar_chart(pd.DataFrame(stats["by_room"]).set_index("room"))
+        else:
+            st.info("目前沒有統計資料。")
+
+    with right:
+        st.markdown("#### 借用狀態")
+        if stats["by_status"]:
+            st.bar_chart(pd.DataFrame(stats["by_status"]).set_index("status"))
+        else:
+            st.info("目前沒有統計資料。")
+
+    st.markdown("#### 每日借用趨勢")
+    if stats["by_date"]:
+        st.line_chart(pd.DataFrame(stats["by_date"]).set_index("date"))
+    else:
+        st.info("目前沒有統計資料。")
+
+
+def weekly_schedule_view(t):
+    st.markdown("## 視覺化週課表 / Weekly Schedule")
+    room_options = [
+        row["room_name"] for row in get_classrooms(active_only=True)
+    ]
+    if not room_options:
+        st.info("目前沒有啟用中的教室。")
+        return
+
+    today = date.today()
+    monday = today - timedelta(days=today.weekday())
+
+    left, right = st.columns(2)
+    with left:
+        week_start = st.date_input(
+            "週起始日（星期一）",
+            value=monday,
+            key="week_start",
+        )
+    with right:
+        selected_room = st.selectbox(
+            t["room"],
+            room_options,
+            key="week_room",
+        )
+
+    schedule_rows = get_week_schedule(str(week_start), selected_room)
+    if not schedule_rows:
+        st.success("本週沒有課程或借用紀錄。")
+        return
+
+    schedule_frame = pd.DataFrame(schedule_rows)
+    schedule_frame.columns = [
+        "日期 / Date",
+        "開始 / Start",
+        "結束 / End",
+        "類型 / Type",
+        "名稱 / Title",
+        "狀態 / Status",
+    ]
+    st.dataframe(
+        schedule_frame,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
 def home(t):
     announcements_block()
     counts = get_dashboard_counts()
@@ -223,9 +374,15 @@ def home(t):
     cols[4].metric("Active / 有效", counts["active_bookings"])
     period = get_active_open_period()
     if period:
-        st.success(f'{period["semester"]}｜{period["start_date"]}～{period["end_date"]}')
+        st.success(
+            f'{period["semester"]}｜'
+            f'{period["start_date"]}～{period["end_date"]}'
+        )
     else:
         st.warning("No active reservation period / 尚未設定開放期間")
+
+    room_status_dashboard()
+    analytics_dashboard()
 
 
 def my_bookings(t):
@@ -323,9 +480,25 @@ def calendar_view(t):
 
 
 def admin_panel():
-    tabs=st.tabs(["Dashboard","Roster / 名冊","Classrooms / 教室","Open Period / 開放期間","Schedule / 課表","Booking Review / 借用審核","Announcements / 公告","Closures / 停借","Settings / 設定","Audit / 操作紀錄"])
-    with tabs[0]: home(TEXT[st.session_state.language])
+    tabs=st.tabs([
+        "Dashboard",
+        "Analytics / 統計分析",
+        "Roster / 名冊",
+        "Classrooms / 教室",
+        "Open Period / 開放期間",
+        "Schedule / 課表",
+        "Booking Review / 借用審核",
+        "Announcements / 公告",
+        "Closures / 停借",
+        "Settings / 設定",
+        "Audit / 操作紀錄",
+    ])
+    with tabs[0]:
+        home(TEXT[st.session_state.language])
     with tabs[1]:
+        analytics_dashboard()
+        weekly_schedule_view(TEXT[st.session_state.language])
+    with tabs[2]:
         kind=st.radio("名冊類別",["教師","學生"],horizontal=True)
         st.download_button("下載範本",roster_template_bytes(kind),f"{kind}名冊範本.xlsx")
         upload=st.file_uploader("上傳 Excel",type=["xlsx"],key=f"roster_{kind}")
@@ -356,7 +529,7 @@ def admin_panel():
             )
         else:
             st.info("目前尚未匯入教師或學生名冊。")
-    with tabs[2]:
+    with tabs[3]:
         st.markdown("## 教室管理")
         existing=get_classrooms()
         st.dataframe(pd.DataFrame(existing),use_container_width=True,hide_index=True)
@@ -368,7 +541,7 @@ def admin_panel():
         if st.button("新增或更新教室"):
             if room_name.strip():
                 save_classroom(room_name.strip(),capacity,location,equipment,status); st.rerun()
-    with tabs[3]:
+    with tabs[4]:
         a,b=st.columns(2)
         with a: sd=st.date_input("開始日期",value=date.today(),key="period_sd")
         with b: ed=st.date_input("結束日期",value=date.today(),key="period_ed")
@@ -381,7 +554,7 @@ def admin_panel():
             else:
                 save_open_period(semester.strip(), str(sd), str(ed))
                 st.success("已儲存")
-    with tabs[4]:
+    with tabs[5]:
         semester=st.text_input("匯入學期",value="115-1",key="course_sem")
         replace=st.checkbox("清除此學期既有課表")
         upload=st.file_uploader("課表 Excel",type=["xlsx"],key="course_file")
@@ -390,7 +563,7 @@ def admin_panel():
             if st.button("匯入課表"): st.success(add_course_blocks(frame,semester,replace)); st.rerun()
         semesters=get_course_semesters()
         if semesters: st.dataframe(pd.DataFrame(semesters),use_container_width=True,hide_index=True)
-    with tabs[5]:
+    with tabs[6]:
         c1,c2,c3,c4=st.columns(4)
         with c1: status_filter=st.selectbox("狀態",["","待審核","已核准","已退回","已取消","已完成"])
         with c2: room_filter=st.selectbox("教室",[""]+[r["room_name"] for r in get_classrooms()])
@@ -421,7 +594,7 @@ def admin_panel():
                     st.warning(f"審核結果已儲存，但 Email 寄送失敗：{email_message}")
                 st.rerun()
         else: st.info("查無借用紀錄")
-    with tabs[6]:
+    with tabs[7]:
         title=st.text_input("公告標題")
         content=st.text_area("公告內容")
         a,b=st.columns(2)
@@ -439,7 +612,7 @@ def admin_panel():
                 st.rerun()
         items=get_announcements()
         if items: st.dataframe(pd.DataFrame(items),use_container_width=True,hide_index=True)
-    with tabs[7]:
+    with tabs[8]:
         day=st.date_input("停借日期",value=date.today(),key="closure_day")
         room=st.selectbox("適用教室",["全部教室"]+[r["room_name"] for r in get_classrooms()])
         reason=st.text_input("停借原因")
@@ -455,13 +628,13 @@ def admin_panel():
                 st.rerun()
         items=get_closures()
         if items: st.dataframe(pd.DataFrame(items),use_container_width=True,hide_index=True)
-    with tabs[8]:
+    with tabs[9]:
         approval=st.radio("借用審核模式",["manual","auto"],index=0 if get_setting("approval_mode","manual")=="manual" else 1,horizontal=True,format_func=lambda x:"人工審核" if x=="manual" else "自動核准")
         max_days=st.number_input("最多可預約未來天數",min_value=1,max_value=365,value=int(get_setting("max_days_ahead","180")))
         if st.button("儲存系統設定"):
             set_setting("approval_mode",approval); set_setting("max_days_ahead",str(max_days)); st.success("已儲存")
         st.caption("Email 通知需在 Streamlit Secrets 設定 [smtp]。")
-    with tabs[9]:
+    with tabs[10]:
         logs=get_audit_logs()
         if logs:
             st.dataframe(pd.DataFrame(logs),use_container_width=True,hide_index=True)
@@ -473,7 +646,7 @@ def admin_panel():
             )
 
 
-st.set_page_config(page_title="AU-PCRS V4.1.1",layout="wide")
+st.set_page_config(page_title="AU-PCRS V5.0",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default
@@ -498,12 +671,19 @@ with st.sidebar:
 
 page=st.sidebar.radio("Menu / 選單",
     [t["home"],t["admin_panel"]] if st.session_state.admin
-    else [t["home"],t["my_bookings"],t["reserve"],t["calendar"]]
+    else [
+        t["home"],
+        t["my_bookings"],
+        t["reserve"],
+        t["calendar"],
+        t["weekly"],
+    ]
 )
 
 if page==t["home"]: home(t)
 elif page==t["my_bookings"]: my_bookings(t)
 elif page==t["reserve"]: reserve(t)
 elif page==t["calendar"]: calendar_view(t)
+elif page==t["weekly"]: weekly_schedule_view(t)
 else: admin_panel()
 footer()

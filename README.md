@@ -1,17 +1,16 @@
-# AU-PCRS V4.1.1 Enterprise Stable Hotfix
+# AU-PCRS V5.0 Enterprise
 
-## 修正內容
+## 主要更新
 
-修正 PostgreSQL 在課表學期彙整時發生的錯誤：
+- 教室即時狀態：可借用、使用中、上課中、停借
+- 最近 7／30／90／180／365 天統計
+- 熱門教室、借用狀態、每日趨勢圖
+- 管理員統計分析頁
+- 教師與學生視覺化週課表
+- 手機版響應式介面優化
+- 保留 V4.1.1 的名冊、教室、課表、公告、停借、審核、QR Code、PDF、Email 與 Excel 報表功能
 
-```text
-function max(boolean) does not exist
-```
+## 部署
 
-V4.1 原本對 `course_blocks.is_active` 使用 `MAX()`。
-PostgreSQL 不支援對 Boolean 欄位執行 `MAX()`，本版改為：
-
-- PostgreSQL：`BOOL_OR(is_active)`
-- SQLite：`MAX(is_active)`
-
-此修正不需要更改 Streamlit Secrets，也不需要手動修改 Supabase 資料表。
+將 ZIP 內檔案覆蓋到 GitHub Repository 根目錄並 Commit。
+Streamlit Cloud 會自動重新部署。

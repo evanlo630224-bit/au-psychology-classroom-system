@@ -207,7 +207,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V5.0.2 Sidebar Hotfix</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V5.0.3 Stable Hotfix</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -355,14 +355,14 @@ def room_status_dashboard():
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 
-def analytics_dashboard():
+def analytics_dashboard(key_prefix):
     st.markdown("### 使用統計 / Usage Analytics")
     period_days = st.selectbox(
         "統計期間",
         [7, 30, 90, 180, 365],
         index=1,
         format_func=lambda value: f"最近 {value} 天",
-        key="analytics_days",
+        key=f"{key_prefix}_analytics_days",
     )
     stats = get_booking_statistics(period_days)
 
@@ -394,7 +394,7 @@ def analytics_dashboard():
         st.info("目前沒有統計資料。")
 
 
-def weekly_schedule_view(t):
+def weekly_schedule_view(t, key_prefix):
     st.markdown("## 視覺化週課表 / Weekly Schedule")
     room_options = [
         row["room_name"] for row in get_classrooms(active_only=True)
@@ -411,13 +411,13 @@ def weekly_schedule_view(t):
         week_start = st.date_input(
             "週起始日（星期一）",
             value=monday,
-            key="week_start",
+            key=f"{key_prefix}_week_start",
         )
     with right:
         selected_room = st.selectbox(
             t["room"],
             room_options,
-            key="week_room",
+            key=f"{key_prefix}_week_room",
         )
 
     schedule_rows = get_week_schedule(str(week_start), selected_room)
@@ -460,7 +460,7 @@ def home(t):
         st.warning("No active reservation period / 尚未設定開放期間")
 
     room_status_dashboard()
-    analytics_dashboard()
+    analytics_dashboard("home")
 
 
 def my_bookings(t):
@@ -574,8 +574,11 @@ def admin_panel():
     with tabs[0]:
         home(TEXT[st.session_state.language])
     with tabs[1]:
-        analytics_dashboard()
-        weekly_schedule_view(TEXT[st.session_state.language])
+        analytics_dashboard("admin_analytics")
+        weekly_schedule_view(
+            TEXT[st.session_state.language],
+            "admin_analytics",
+        )
     with tabs[2]:
         kind=st.radio("名冊類別",["教師","學生"],horizontal=True)
         st.download_button("下載範本",roster_template_bytes(kind),f"{kind}名冊範本.xlsx")
@@ -724,7 +727,7 @@ def admin_panel():
             )
 
 
-st.set_page_config(page_title="AU-PCRS V5.0.2",layout="wide")
+st.set_page_config(page_title="AU-PCRS V5.0.3",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default
@@ -762,6 +765,6 @@ if page==t["home"]: home(t)
 elif page==t["my_bookings"]: my_bookings(t)
 elif page==t["reserve"]: reserve(t)
 elif page==t["calendar"]: calendar_view(t)
-elif page==t["weekly"]: weekly_schedule_view(t)
+elif page==t["weekly"]: weekly_schedule_view(t, "user_weekly")
 else: admin_panel()
 footer()

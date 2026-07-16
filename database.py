@@ -763,11 +763,32 @@ def get_announcements(active_only=False):
 
 
 def delete_announcement(announcement_id):
+    announcement_id = int(announcement_id)
     with engine.begin() as conn:
-        result = conn.execute(delete(announcements).where(
-            announcements.c.id == int(announcement_id)
-        ))
-    return result.rowcount or 0
+        existing = conn.execute(
+            select(
+                announcements.c.id,
+                announcements.c.title,
+            ).where(announcements.c.id == announcement_id)
+        ).first()
+        if not existing:
+            return 0
+        result = conn.execute(
+            delete(announcements).where(
+                announcements.c.id == announcement_id
+            )
+        )
+
+    deleted = result.rowcount or 0
+    if deleted:
+        row = dict(existing._mapping)
+        log_action(
+            "DELETE",
+            "announcement",
+            str(announcement_id),
+            f'title={row["title"]}',
+        )
+    return deleted
 
 
 

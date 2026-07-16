@@ -207,7 +207,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V5.0.4 Booking Review Hotfix</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V5.0.5 Announcement Delete Hotfix</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -719,8 +719,48 @@ def admin_panel():
                     title.strip(), content.strip(), str(sd), str(ed), True
                 )
                 st.rerun()
-        items=get_announcements()
-        if items: st.dataframe(pd.DataFrame(items),use_container_width=True,hide_index=True)
+        items = get_announcements()
+        if items:
+            st.dataframe(
+                pd.DataFrame(items),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.markdown("### 刪除既有公告")
+            announcement_options = {
+                (
+                    f'#{item["id"]}｜{item["title"]}｜'
+                    f'{item["start_date"]}～{item["end_date"]}'
+                ): item["id"]
+                for item in items
+            }
+            selected_label = st.selectbox(
+                "選擇要刪除的公告",
+                list(announcement_options.keys()),
+                key="announcement_delete_select",
+            )
+            confirm_delete = st.checkbox(
+                "我確認要永久刪除此公告",
+                key="announcement_delete_confirm",
+            )
+            if st.button(
+                "刪除公告",
+                key="announcement_delete_button",
+            ):
+                if not confirm_delete:
+                    st.error("請先勾選確認。")
+                else:
+                    deleted = delete_announcement(
+                        announcement_options[selected_label]
+                    )
+                    if deleted:
+                        st.success("公告已刪除。")
+                        st.rerun()
+                    else:
+                        st.warning("找不到指定公告，可能已被刪除。")
+        else:
+            st.info("目前尚無公告紀錄。")
     with tabs[8]:
         day=st.date_input("停借日期",value=date.today(),key="closure_day")
         room=st.selectbox("適用教室",["全部教室"]+[r["room_name"] for r in get_classrooms()])
@@ -755,7 +795,7 @@ def admin_panel():
             )
 
 
-st.set_page_config(page_title="AU-PCRS V5.0.4",layout="wide")
+st.set_page_config(page_title="AU-PCRS V5.0.5",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default

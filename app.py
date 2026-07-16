@@ -85,9 +85,50 @@ def valid_phone(value):
     return len(re.sub(r"\D", "", value)) >= 8
 
 
-def excel_bytes(rows, sheet_name):
+def excel_bytes(rows, sheet_name, columns=None):
+    """Export rows safely to Excel.
+
+    PostgreSQL timestamptz values are timezone-aware. Excel cannot write
+    timezone-aware datetimes, so this helper converts them to readable strings.
+    It also supports exporting an empty table with predefined columns.
+    """
     output = io.BytesIO()
-    pd.DataFrame(rows).to_excel(output, index=False, sheet_name=sheet_name, engine="openpyxl")
+    frame = pd.DataFrame(rows)
+
+    if frame.empty and columns:
+        frame = pd.DataFrame(columns=columns)
+
+    for column in frame.columns:
+        series = frame[column]
+
+        # Handle pandas datetime dtypes, including timezone-aware timestamps.
+        if pd.api.types.is_datetime64_any_dtype(series):
+            try:
+                if getattr(series.dt, "tz", None) is not None:
+                    frame[column] = series.dt.tz_convert(None)
+            except (AttributeError, TypeError):
+                pass
+
+        # Handle object columns containing Python datetime/time/date objects.
+        if frame[column].dtype == "object":
+            frame[column] = frame[column].map(
+                lambda value: (
+                    value.isoformat(sep=" ", timespec="seconds")
+                    if isinstance(value, datetime)
+                    else value.isoformat()
+                    if isinstance(value, date)
+                    else value.strftime("%H:%M:%S")
+                    if hasattr(value, "strftime") and value.__class__.__name__ == "time"
+                    else value
+                )
+            )
+
+    frame.to_excel(
+        output,
+        index=False,
+        sheet_name=str(sheet_name)[:31] or "資料",
+        engine="openpyxl",
+    )
     return output.getvalue()
 
 
@@ -128,7 +169,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V4.0 Enterprise</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V4.1 Enterprise Stable</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -205,7 +246,13 @@ def my_bookings(t):
         if st.button("取消借用 / Cancel"):
             if reason.strip():
                 cancel_booking(selected, reason.strip())
-                send_booking_email(item["email"], "AU-PCRS Cancellation", f"Your reservation {selected} has been cancelled.")
+                email_ok, email_message = send_booking_email(
+                    item["email"],
+                    "AU-PCRS Cancellation",
+                    f"Your reservation {selected} has been cancelled.",
+                )
+                if not email_ok and email_message != "SMTP secrets not configured":
+                    st.warning(f"借用已取消，但 Email 寄送失敗：{email_message}")
                 st.rerun()
             else:
                 st.error("請輸入取消原因。")
@@ -245,7 +292,13 @@ def reserve(t):
         user["identification_code"],phone.strip(),email.strip(),reason.strip()
     )
     st.success(f"借用編號：{booking_id}｜狀態：{status}")
-    send_booking_email(email, "AU-PCRS Reservation", f"Reservation {booking_id} submitted. Status: {status}")
+    email_ok, email_message = send_booking_email(
+        email,
+        "AU-PCRS Reservation",
+        f"Reservation {booking_id} submitted. Status: {status}",
+    )
+    if not email_ok and email_message != "SMTP secrets not configured":
+        st.warning(f"借用已建立，但 Email 寄送失敗：{email_message}")
 
 
 def calendar_view(t):
@@ -288,7 +341,21 @@ def admin_panel():
         rows=get_all_authorized_users()
         if rows:
             st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
-            st.download_button("匯出名冊",excel_bytes(rows,"名冊"),f"authorized_users_{date.today()}.xlsx")
+            st.download_button(
+                "匯出名冊",
+                excel_bytes(
+                    rows,
+                    "名冊",
+                    columns=[
+                        "id", "user_type", "identification_code", "name",
+                        "email", "status", "imported_at",
+                    ],
+                ),
+                f"authorized_users_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.info("目前尚未匯入教師或學生名冊。")
     with tabs[2]:
         st.markdown("## 教室管理")
         existing=get_classrooms()
@@ -307,7 +374,13 @@ def admin_panel():
         with b: ed=st.date_input("結束日期",value=date.today(),key="period_ed")
         semester=st.text_input("學期",value="115-1")
         if st.button("儲存開放期間"):
-            save_open_period(semester,str(sd),str(ed)); st.success("已儲存")
+            if sd > ed:
+                st.error("開始日期不可晚於結束日期。")
+            elif not semester.strip():
+                st.error("請輸入學期。")
+            else:
+                save_open_period(semester.strip(), str(sd), str(ed))
+                st.success("已儲存")
     with tabs[4]:
         semester=st.text_input("匯入學期",value="115-1",key="course_sem")
         replace=st.checkbox("清除此學期既有課表")
@@ -327,14 +400,25 @@ def admin_panel():
         rows=get_all_bookings({"status":status_filter,"room":room_filter,"date_from":str(df),"date_to":str(dt),"keyword":keyword})
         if rows:
             st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
-            st.download_button("匯出借用紀錄",excel_bytes(rows,"借用紀錄"),f"bookings_{date.today()}.xlsx")
+            st.download_button(
+                "匯出借用紀錄",
+                excel_bytes(rows, "借用紀錄"),
+                f"bookings_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
             selected=st.selectbox("借用編號",[r["booking_id"] for r in rows])
             new_status=st.selectbox("審核結果",["已核准","已退回","已取消","已完成"])
             note=st.text_area("審核備註")
             if st.button("儲存審核結果"):
                 review_booking(selected,new_status,"Administrator",note)
                 item=get_booking_by_id(selected)
-                send_booking_email(item["email"],"AU-PCRS Review",f"Reservation {selected}: {new_status}\n{note}")
+                email_ok, email_message = send_booking_email(
+                    item["email"],
+                    "AU-PCRS Review",
+                    f"Reservation {selected}: {new_status}\n{note}",
+                )
+                if not email_ok and email_message != "SMTP secrets not configured":
+                    st.warning(f"審核結果已儲存，但 Email 寄送失敗：{email_message}")
                 st.rerun()
         else: st.info("查無借用紀錄")
     with tabs[6]:
@@ -344,7 +428,15 @@ def admin_panel():
         with a: sd=st.date_input("公告開始",value=date.today(),key="ann_sd")
         with b: ed=st.date_input("公告結束",value=date.today()+timedelta(days=30),key="ann_ed")
         if st.button("發布公告"):
-            save_announcement(title,content,str(sd),str(ed),True); st.rerun()
+            if not title.strip() or not content.strip():
+                st.error("請輸入公告標題與內容。")
+            elif sd > ed:
+                st.error("公告開始日期不可晚於結束日期。")
+            else:
+                save_announcement(
+                    title.strip(), content.strip(), str(sd), str(ed), True
+                )
+                st.rerun()
         items=get_announcements()
         if items: st.dataframe(pd.DataFrame(items),use_container_width=True,hide_index=True)
     with tabs[7]:
@@ -352,7 +444,15 @@ def admin_panel():
         room=st.selectbox("適用教室",["全部教室"]+[r["room_name"] for r in get_classrooms()])
         reason=st.text_input("停借原因")
         if st.button("新增停借"):
-            save_closure(str(day),"" if room=="全部教室" else room,reason); st.rerun()
+            if not reason.strip():
+                st.error("請輸入停借原因。")
+            else:
+                save_closure(
+                    str(day),
+                    "" if room == "全部教室" else room,
+                    reason.strip(),
+                )
+                st.rerun()
         items=get_closures()
         if items: st.dataframe(pd.DataFrame(items),use_container_width=True,hide_index=True)
     with tabs[8]:
@@ -365,10 +465,15 @@ def admin_panel():
         logs=get_audit_logs()
         if logs:
             st.dataframe(pd.DataFrame(logs),use_container_width=True,hide_index=True)
-            st.download_button("匯出操作紀錄",excel_bytes(logs,"操作紀錄"),f"audit_{date.today()}.xlsx")
+            st.download_button(
+                "匯出操作紀錄",
+                excel_bytes(logs, "操作紀錄"),
+                f"audit_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
 
-st.set_page_config(page_title="AU-PCRS V4.0",layout="wide")
+st.set_page_config(page_title="AU-PCRS V4.1",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default

@@ -517,6 +517,10 @@ def save_closure(closure_date, room, reason):
             closure_date=as_date(closure_date), room=room or None,
             reason=reason, created_at=datetime.now()
         ))
+    log_action(
+        "CREATE", "closure", str(closure_date),
+        f"room={room or 'ALL'}; reason={reason}",
+    )
 
 
 def get_closures():
@@ -662,6 +666,7 @@ def save_announcement(title, content, start_date, end_date, is_active=True):
             start_date=as_date(start_date), end_date=as_date(end_date),
             is_active=bool(is_active), created_at=datetime.now(),
         ))
+    log_action("CREATE", "announcement", title, f"{start_date}~{end_date}")
 
 
 def get_announcements(active_only=False):

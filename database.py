@@ -466,15 +466,29 @@ def add_course_blocks(dataframe, semester, replace=False):
 
 
 def get_course_semesters():
+    """Return semester summaries without applying MAX() to a Boolean column.
+
+    PostgreSQL does not support max(boolean). bool_or() is used on PostgreSQL,
+    while max() remains suitable for SQLite's integer-backed Boolean values.
+    """
+    active_summary = (
+        func.bool_or(course_blocks.c.is_active)
+        if engine.dialect.name == "postgresql"
+        else func.max(course_blocks.c.is_active)
+    )
+
+    statement = (
+        select(
+            course_blocks.c.semester,
+            func.count().label("course_count"),
+            active_summary.label("is_active"),
+        )
+        .group_by(course_blocks.c.semester)
+        .order_by(course_blocks.c.semester.desc())
+    )
+
     with engine.connect() as conn:
-        return rows(conn.execute(
-            select(
-                course_blocks.c.semester,
-                func.count().label("course_count"),
-                func.max(course_blocks.c.is_active).label("is_active"),
-            ).group_by(course_blocks.c.semester)
-            .order_by(course_blocks.c.semester.desc())
-        ))
+        return rows(conn.execute(statement))
 
 
 def set_course_semester_active(semester, active):

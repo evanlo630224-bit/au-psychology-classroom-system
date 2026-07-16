@@ -13,6 +13,7 @@ from database import (
     check_booking_conflict,
     create_booking,
     database_health_check,
+    delete_authorized_user,
     delete_course_semester,
     get_active_open_period,
     get_all_authorized_users,
@@ -144,6 +145,48 @@ def excel_bytes(rows: list[dict], sheet_name: str) -> bytes:
     return output.getvalue()
 
 
+
+def roster_template_bytes(user_type: str) -> bytes:
+    if user_type == "教師":
+        sample = pd.DataFrame(
+            [
+                {
+                    "教師職編": "T0001",
+                    "姓名": "測試教師",
+                    "聯絡信箱": "teacher@example.com",
+                    "狀態": "啟用",
+                }
+            ]
+        )
+    else:
+        sample = pd.DataFrame(
+            [
+                {
+                    "學生學號": "910300510",
+                    "姓名": "測試學生",
+                    "聯絡信箱": "student@example.com",
+                    "狀態": "啟用",
+                }
+            ]
+        )
+    output = io.BytesIO()
+    sample.to_excel(output, index=False, sheet_name=user_type, engine="openpyxl")
+    return output.getvalue()
+
+
+def roster_summary(rows: list[dict]) -> dict:
+    teachers = sum(1 for row in rows if row.get("user_type") == "教師")
+    students = sum(1 for row in rows if row.get("user_type") == "學生")
+    active = sum(1 for row in rows if row.get("status") == "啟用")
+    inactive = sum(1 for row in rows if row.get("status") != "啟用")
+    return {
+        "teachers": teachers,
+        "students": students,
+        "active": active,
+        "inactive": inactive,
+    }
+
+
 def apply_style():
     st.markdown(
         """
@@ -265,7 +308,7 @@ def render_header(t):
                 <div class="title1">{t["title1"]}</div>
                 <div class="title2">{t["title2"]}</div>
                 <div class="subtitle">{t["subtitle"]}</div>
-                <div class="pill">AU-PCRS V3.0.1 Login</div>
+                <div class="pill">AU-PCRS V3.1 Enterprise</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -533,27 +576,100 @@ def render_admin():
         render_home()
 
     with tabs[1]:
+        st.markdown("## 教師／學生名冊管理")
         user_type = st.radio("名冊類別", ["教師", "學生"], horizontal=True)
-        upload = st.file_uploader(
-            "Excel：辨識碼、姓名、聯絡信箱、狀態",
-            type=["xlsx"],
-            key="roster_upload",
+
+        template_name = (
+            "教師名冊範本.xlsx" if user_type == "教師" else "學生名冊範本.xlsx"
         )
-        replace = st.checkbox("覆蓋此類名冊")
-        if st.button("匯入名冊"):
+        st.download_button(
+            "下載名冊 Excel 範本",
+            data=roster_template_bytes(user_type),
+            file_name=template_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        upload = st.file_uploader(
+            "上傳 Excel 名冊",
+            type=["xlsx"],
+            key=f"roster_upload_{user_type}",
+            help="必要欄位：教師職編或學生學號、姓名；Email與狀態可省略。",
+        )
+        replace = st.radio(
+            "匯入模式",
+            ["合併更新", f"覆蓋{user_type}名冊"],
+            horizontal=True,
+        )
+
+        if upload is not None:
+            preview = pd.read_excel(upload, dtype=str).fillna("")
+            st.caption("匯入預覽")
+            st.dataframe(preview.head(30), use_container_width=True, hide_index=True)
+
+        if st.button("開始匯入名冊", type="primary"):
             if upload is None:
-                st.error("請先選擇檔案")
+                st.error("請先選擇 Excel 檔案。")
             else:
                 result = import_authorized_users(
                     pd.read_excel(upload, dtype=str).fillna(""),
                     user_type,
-                    replace,
+                    replace.startswith("覆蓋"),
                 )
-                st.success(result)
+                st.success(
+                    f'匯入完成：新增 {result["inserted"]}、'
+                    f'更新 {result["updated"]}、略過 {result["skipped"]}'
+                )
+                st.rerun()
 
         rows = get_all_authorized_users()
+        summary = roster_summary(rows)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("教師", summary["teachers"])
+        c2.metric("學生", summary["students"])
+        c3.metric("啟用", summary["active"])
+        c4.metric("停用", summary["inactive"])
+
         if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            roster_df = pd.DataFrame(rows)
+            st.dataframe(roster_df, use_container_width=True, hide_index=True)
+
+            export_name = f"authorized_users_{date.today()}.xlsx"
+            st.download_button(
+                "匯出全部名冊 Excel",
+                data=excel_bytes(rows, "名冊"),
+                file_name=export_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+            delete_type = st.selectbox(
+                "刪除名冊類別",
+                ["教師", "學生"],
+                key="delete_user_type",
+            )
+            candidates = [
+                row for row in rows if row.get("user_type") == delete_type
+            ]
+            if candidates:
+                selected_code = st.selectbox(
+                    "選擇要刪除的辨識碼",
+                    [row["identification_code"] for row in candidates],
+                )
+                confirm_delete = st.checkbox("我確認要刪除此筆名冊資料")
+                if st.button("刪除選取名冊資料"):
+                    if not confirm_delete:
+                        st.error("請先勾選確認。")
+                    else:
+                        deleted = delete_authorized_user(
+                            delete_type,
+                            selected_code,
+                        )
+                        if deleted:
+                            st.success("名冊資料已刪除。")
+                            st.rerun()
+                        else:
+                            st.warning("找不到指定資料。")
+        else:
+            st.info("目前尚未匯入教師或學生名冊。")
 
     with tabs[2]:
         left, right = st.columns(2)

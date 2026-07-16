@@ -234,14 +234,44 @@ def verify_authorized_user_by_code(user_type, code):
 
 
 def import_authorized_users(dataframe: pd.DataFrame, user_type: str, replace: bool):
-    required = {"辨識碼", "姓名", "聯絡信箱", "狀態"}
-    missing = required - set(dataframe.columns)
-    if missing:
-        raise ValueError("Excel 缺少欄位：" + "、".join(sorted(missing)))
+    aliases = {
+        "辨識碼": ["辨識碼", "教師職編", "學生學號", "職編", "學號", "identification_code", "id"],
+        "姓名": ["姓名", "name"],
+        "聯絡信箱": ["聯絡信箱", "Email", "email", "電子郵件"],
+        "狀態": ["狀態", "status"],
+    }
 
-    work = dataframe.copy().fillna("")
-    for column in required:
+    normalized = {}
+    for target, candidates in aliases.items():
+        for candidate in candidates:
+            if candidate in dataframe.columns:
+                normalized[target] = candidate
+                break
+
+    required = {"辨識碼", "姓名"}
+    missing = required - set(normalized.keys())
+    if missing:
+        raise ValueError("Excel 缺少必要欄位：" + "、".join(sorted(missing)))
+
+    work = pd.DataFrame()
+    work["辨識碼"] = dataframe[normalized["辨識碼"]]
+    work["姓名"] = dataframe[normalized["姓名"]]
+    work["聯絡信箱"] = (
+        dataframe[normalized["聯絡信箱"]]
+        if "聯絡信箱" in normalized
+        else ""
+    )
+    work["狀態"] = (
+        dataframe[normalized["狀態"]]
+        if "狀態" in normalized
+        else "啟用"
+    )
+    work = work.fillna("")
+
+    for column in ["辨識碼", "姓名", "聯絡信箱", "狀態"]:
         work[column] = work[column].astype(str).str.strip()
+
+    work["辨識碼"] = work["辨識碼"].str.replace(r"\.0$", "", regex=True)
 
     inserted = updated = skipped = 0
     with engine.begin() as connection:
@@ -314,6 +344,28 @@ def import_authorized_users(dataframe: pd.DataFrame, user_type: str, replace: bo
         "updated": updated,
         "skipped": skipped,
     }
+
+
+
+def delete_authorized_user(user_type, identification_code):
+    with engine.begin() as connection:
+        result = connection.execute(
+            delete(authorized_users).where(
+                and_(
+                    authorized_users.c.user_type == user_type,
+                    authorized_users.c.identification_code == identification_code,
+                )
+            )
+        )
+    deleted = result.rowcount or 0
+    if deleted:
+        log_action(
+            "DELETE",
+            "authorized_users",
+            f"{user_type}:{identification_code}",
+            "管理員刪除名冊資料",
+        )
+    return deleted
 
 
 def get_all_authorized_users():

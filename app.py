@@ -151,6 +151,34 @@ def apply_style():
     [data-testid=stSidebar] *{color:white!important}
     [data-testid=stSidebar] [data-baseweb=select] *{color:#26243A!important}
     [data-testid=stSidebar] input{color:#26243A!important;background:white!important}
+    [data-testid=stSidebar] .stButton > button{
+        background:#ffffff!important;
+        color:#35188E!important;
+        border:1px solid rgba(255,255,255,.65)!important;
+        font-weight:800!important;
+        opacity:1!important;
+    }
+    [data-testid=stSidebar] .stButton > button *{
+        color:#35188E!important;
+        opacity:1!important;
+    }
+    [data-testid=stSidebar] .stButton > button:hover{
+        background:#F2EEFF!important;
+        color:#2F1A96!important;
+        border-color:#D9CEFF!important;
+    }
+    [data-testid=stSidebar] .stButton > button:focus,
+    [data-testid=stSidebar] .stButton > button:active{
+        background:#E8E0FF!important;
+        color:#2F1A96!important;
+        border-color:#CFC0FF!important;
+        box-shadow:0 0 0 2px rgba(255,255,255,.25)!important;
+    }
+    [data-testid=stSidebar] .stButton > button:disabled{
+        background:#ffffff!important;
+        color:#35188E!important;
+        opacity:1!important;
+    }
     .hero{padding:22px 28px;border:1px solid #e5dfff;border-radius:22px;background:#fff;box-shadow:0 12px 34px rgba(75,43,215,.08)}
     .h1{font-size:clamp(1.8rem,3vw,3rem);font-weight:850;color:var(--pd);line-height:1.1}
     .h2{font-size:clamp(1.5rem,2.5vw,2.5rem);font-weight:780;margin-top:8px}
@@ -179,7 +207,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V5.0 Enterprise</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V5.0.2 Sidebar Hotfix</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -189,28 +217,78 @@ def footer():
 
 
 def login(t):
-    st.markdown(f'<div class="login-card"><h2>{t["login_title"]} / System Login</h2></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="login-card"><h2>{t["login_title"]} / System Login</h2></div>',
+        unsafe_allow_html=True,
+    )
+
     roles = [t["faculty"], t["student"], t["admin"]]
-    with st.form("login"):
-        role = st.radio("身分 / Role", roles, horizontal=True)
-        credential = st.text_input(t["admin_password"] if role==t["admin"] else t["id_code"], type="password" if role==t["admin"] else "default")
-        submitted = st.form_submit_button(t["login"], use_container_width=True)
+
+    # 身分選擇必須放在 form 外。
+    # Streamlit form 會將元件變更延後到送出時才同步；
+    # 若 role 放在 form 內，第一次按登入只會套用「管理員」身分，
+    # 第二次才真正送出管理員密碼。
+    role = st.radio(
+        "身分 / Role",
+        roles,
+        horizontal=True,
+        key="login_role",
+    )
+
+    is_admin_role = role == t["admin"]
+    field_label = (
+        t["admin_password"]
+        if is_admin_role
+        else t["id_code"]
+    )
+    field_type = "password" if is_admin_role else "default"
+
+    with st.form("login_form", clear_on_submit=False):
+        credential = st.text_input(
+            field_label,
+            type=field_type,
+            key=f"login_credential_{'admin' if is_admin_role else 'user'}",
+        )
+        submitted = st.form_submit_button(
+            t["login"],
+            use_container_width=True,
+        )
+
     if submitted:
-        if role == t["admin"]:
-            if credential == admin_password():
-                st.session_state.user={"user_type":"管理員","name":"Administrator","identification_code":"ADMIN","email":""}
-                st.session_state.admin=True
-                record_login("管理員","ADMIN","Administrator",True)
+        credential = credential.strip()
+
+        if is_admin_role:
+            if credential and credential == admin_password():
+                st.session_state.user = {
+                    "user_type": "管理員",
+                    "name": "Administrator",
+                    "identification_code": "ADMIN",
+                    "email": "",
+                }
+                st.session_state.admin = True
+                record_login("管理員", "ADMIN", "Administrator", True)
                 st.rerun()
+
+            record_login("管理員", "ADMIN", "Administrator", False)
             st.error(t["invalid_admin"])
         else:
-            kind = "教師" if role==t["faculty"] else "學生"
+            kind = "教師" if role == t["faculty"] else "學生"
             user = verify_authorized_user_by_code(kind, credential)
+
             if user:
-                st.session_state.user=user; st.session_state.admin=False
-                record_login(user["user_type"],user["identification_code"],user["name"],True)
+                st.session_state.user = user
+                st.session_state.admin = False
+                record_login(
+                    user["user_type"],
+                    user["identification_code"],
+                    user["name"],
+                    True,
+                )
                 st.rerun()
+
+            record_login(kind, credential, "", False)
             st.error(t["invalid_user"])
+
     st.caption(t["privacy"])
 
 
@@ -646,7 +724,7 @@ def admin_panel():
             )
 
 
-st.set_page_config(page_title="AU-PCRS V5.0",layout="wide")
+st.set_page_config(page_title="AU-PCRS V5.0.2",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default

@@ -155,6 +155,13 @@ def apply_style():
             background: linear-gradient(180deg,#35188E,#5630D8);
         }
         [data-testid="stSidebar"] * { color:white !important; }
+        [data-testid="stSidebar"] [data-baseweb="select"] * {
+            color:#26243A !important;
+        }
+        [data-testid="stSidebar"] input {
+            color:#26243A !important;
+            background:white !important;
+        }
         .hero {
             padding:22px 28px;
             border:1px solid #E5DFFF;
@@ -190,6 +197,33 @@ def apply_style():
             background:white;
             box-shadow:0 8px 22px rgba(75,43,215,.06);
         }
+        .login-card {
+            max-width:680px;
+            margin:1.5rem auto .8rem auto;
+            padding:1.5rem 1.8rem;
+            border:1px solid #E5DFFF;
+            border-radius:22px;
+            background:#fff;
+            box-shadow:0 16px 42px rgba(75,43,215,.10);
+            text-align:center;
+        }
+        .login-card h2 {
+            color:#2F1A96;
+            margin:.1rem 0 .35rem 0;
+            font-size:2rem;
+        }
+        .login-card p {
+            color:#756F88;
+            margin:0;
+        }
+        .footer {
+            margin-top:2.5rem;
+            padding:1.2rem;
+            border-top:1px solid #E5DFFF;
+            color:#777184;
+            text-align:center;
+            font-size:.9rem;
+        }
         .stButton>button,.stFormSubmitButton>button,.stDownloadButton>button {
             border-radius:12px;
             font-weight:700;
@@ -204,7 +238,7 @@ def render_header(t):
     left, center, right = st.columns([1.1, 4.5, 1.1], vertical_alignment="center")
     with left:
         if PSY_LOGO.exists():
-            st.image(str(PSY_LOGO), width=145)
+            st.image(str(PSY_LOGO), width=210)
     with center:
         st.markdown(
             f"""
@@ -212,7 +246,7 @@ def render_header(t):
                 <div class="title1">{t["title1"]}</div>
                 <div class="title2">{t["title2"]}</div>
                 <div class="subtitle">{t["subtitle"]}</div>
-                <div class="pill">AU-PCRS V2.1 Repair</div>
+                <div class="pill">AU-PCRS V2.2 Professional</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -223,8 +257,15 @@ def render_header(t):
 
 
 def render_login(t):
-    st.markdown(f"## {t['login_title']}")
-    st.caption(t["login_hint"])
+    st.markdown(
+        f"""
+        <div class="login-card">
+            <h2>{t["login_title"]} / System Login</h2>
+            <p>{t["login_hint"]}<br>Select your role and enter your identification code</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     with st.form("login_form"):
         role = st.radio(
             "身分 / Role",
@@ -491,6 +532,18 @@ def render_admin():
             st.info("目前尚無操作紀錄")
 
 
+
+def render_footer():
+    st.markdown(
+        """
+        <div class="footer">
+            Asia University Department of Psychology<br>
+            © 2026 AU-PCRS Cloud System
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 st.set_page_config(page_title="AU-PCRS", layout="wide")
 apply_style()
 
@@ -520,6 +573,7 @@ render_header(t)
 
 if st.session_state.user is None:
     render_login(t)
+    render_footer()
     st.stop()
 
 with st.sidebar:
@@ -544,3 +598,5 @@ elif page == t["query"]:
     render_query(t)
 else:
     render_admin()
+
+render_footer()

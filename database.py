@@ -189,6 +189,7 @@ def _migrate_existing_schema():
     inspector = inspect(engine)
     if "bookings" not in inspector.get_table_names():
         return
+
     existing = {col["name"] for col in inspector.get_columns("bookings")}
     additions = {
         "review_note": "TEXT",
@@ -196,13 +197,49 @@ def _migrate_existing_schema():
         "reviewed_by": "VARCHAR(100)",
         "qr_token": "VARCHAR(100)",
     }
+
     with engine.begin() as conn:
         for name, sql_type in additions.items():
             if name not in existing:
                 if engine.dialect.name == "postgresql":
-                    conn.execute(text(f'ALTER TABLE bookings ADD COLUMN IF NOT EXISTS {name} {sql_type}'))
+                    conn.execute(
+                        text(
+                            f'ALTER TABLE bookings '
+                            f'ADD COLUMN IF NOT EXISTS {name} {sql_type}'
+                        )
+                    )
                 else:
-                    conn.execute(text(f'ALTER TABLE bookings ADD COLUMN {name} {sql_type}'))
+                    conn.execute(
+                        text(f'ALTER TABLE bookings ADD COLUMN {name} {sql_type}')
+                    )
+
+        # Earlier AU-PCRS versions may have created a CHECK constraint that only
+        # allowed statuses such as "有效" and "已取消". V4/V5 added workflow
+        # statuses including 待審核、已核准、已退回、已完成. SQLAlchemy
+        # create_all() does not replace an existing constraint, so approving a
+        # booking can raise IntegrityError. Remove only legacy CHECK constraints
+        # whose SQL expression references the status column.
+        if engine.dialect.name == "postgresql":
+            refreshed_inspector = inspect(engine)
+            for constraint in refreshed_inspector.get_check_constraints("bookings"):
+                constraint_name = constraint.get("name")
+                sql_text = (constraint.get("sqltext") or "").lower()
+                if constraint_name and "status" in sql_text:
+                    safe_name = constraint_name.replace('"', '""')
+                    conn.execute(
+                        text(
+                            f'ALTER TABLE bookings '
+                            f'DROP CONSTRAINT IF EXISTS "{safe_name}"'
+                        )
+                    )
+
+            # Keep a valid default for new records after removing old constraints.
+            conn.execute(
+                text(
+                    "ALTER TABLE bookings "
+                    "ALTER COLUMN status SET DEFAULT '待審核'"
+                )
+            )
 
 
 def init_db():
@@ -651,15 +688,43 @@ def get_booking_by_id(booking_id):
 
 
 def review_booking(booking_id, new_status, reviewer, note=""):
+    allowed_statuses = {
+        "待審核", "已核准", "已退回", "已取消", "已完成", "有效"
+    }
+    if new_status not in allowed_statuses:
+        raise ValueError("不支援的借用狀態。")
+
+    reviewer = (reviewer or "Administrator").strip() or "Administrator"
+    note = (note or "").strip()
+
     with engine.begin() as conn:
-        conn.execute(update(bookings).where(
-            bookings.c.booking_id == booking_id
-        ).values(
-            status=new_status, review_note=note,
-            reviewed_at=datetime.now(), reviewed_by=reviewer,
-            updated_at=datetime.now(),
-        ))
-    log_action("REVIEW", "booking", booking_id, f"{new_status}; {note}")
+        existing = conn.execute(
+            select(bookings.c.booking_id).where(
+                bookings.c.booking_id == booking_id
+            )
+        ).first()
+        if not existing:
+            raise ValueError("找不到指定的借用紀錄。")
+
+        result = conn.execute(
+            update(bookings)
+            .where(bookings.c.booking_id == booking_id)
+            .values(
+                status=new_status,
+                review_note=note,
+                reviewed_at=datetime.now(),
+                reviewed_by=reviewer,
+                updated_at=datetime.now(),
+            )
+        )
+
+    log_action(
+        "REVIEW",
+        "booking",
+        booking_id,
+        f"status={new_status}; reviewer={reviewer}; note={note}",
+    )
+    return (result.rowcount or 0) > 0
 
 
 def cancel_booking(booking_id, cancel_reason):

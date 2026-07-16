@@ -207,7 +207,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V5.0.3 Stable Hotfix</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V5.0.4 Booking Review Hotfix</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -663,17 +663,45 @@ def admin_panel():
             selected=st.selectbox("借用編號",[r["booking_id"] for r in rows])
             new_status=st.selectbox("審核結果",["已核准","已退回","已取消","已完成"])
             note=st.text_area("審核備註")
-            if st.button("儲存審核結果"):
-                review_booking(selected,new_status,"Administrator",note)
-                item=get_booking_by_id(selected)
-                email_ok, email_message = send_booking_email(
-                    item["email"],
-                    "AU-PCRS Review",
-                    f"Reservation {selected}: {new_status}\n{note}",
-                )
-                if not email_ok and email_message != "SMTP secrets not configured":
-                    st.warning(f"審核結果已儲存，但 Email 寄送失敗：{email_message}")
-                st.rerun()
+            if st.button("儲存審核結果", key="booking_review_submit"):
+                try:
+                    updated = review_booking(
+                        selected,
+                        new_status,
+                        "Administrator",
+                        note,
+                    )
+                    if not updated:
+                        st.warning("找不到指定借用紀錄，未進行更新。")
+                    else:
+                        item = get_booking_by_id(selected)
+                        if item and item.get("email"):
+                            email_ok, email_message = send_booking_email(
+                                item["email"],
+                                "AU-PCRS Review",
+                                (
+                                    f"Reservation {selected}: "
+                                    f"{new_status}\n{note or ''}"
+                                ),
+                            )
+                            if (
+                                not email_ok
+                                and email_message
+                                != "SMTP secrets not configured"
+                            ):
+                                st.warning(
+                                    "審核結果已儲存，但 Email 寄送失敗："
+                                    f"{email_message}"
+                                )
+                        st.success(f"借用編號 {selected} 已更新為「{new_status}」。")
+                        st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
+                except Exception:
+                    st.error(
+                        "審核資料儲存失敗。請重新整理頁面後再試；"
+                        "若持續發生，請查看 Streamlit Logs。"
+                    )
         else: st.info("查無借用紀錄")
     with tabs[7]:
         title=st.text_input("公告標題")
@@ -727,7 +755,7 @@ def admin_panel():
             )
 
 
-st.set_page_config(page_title="AU-PCRS V5.0.3",layout="wide")
+st.set_page_config(page_title="AU-PCRS V5.0.4",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default

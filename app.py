@@ -338,7 +338,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V7.0.4 AI Pro NameError Hotfix</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V7.0.5 Translation Validation</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -1451,8 +1451,15 @@ def admin_panel():
                         title_en = translate_zh_to_en(title.strip())
                         content_en = translate_zh_to_en(content.strip())
 
-                    if not title_en or not content_en:
-                        st.error("英文翻譯未完成，請稍後再試。")
+                    if (
+                        not title_en
+                        or not content_en
+                        or title_en == title.strip()
+                        or content_en == content.strip()
+                    ):
+                        st.error(
+                            "翻譯服務未產生有效英文，公告尚未發布。"
+                        )
                     else:
                         save_bilingual_announcement(
                             title.strip(),
@@ -1509,9 +1516,23 @@ def admin_panel():
             current_title_en = str(edit_item.get("title_en") or "")
             current_content_en = str(edit_item.get("content_en") or "")
 
-            with st.expander("目前英文翻譯 / Current English Translation"):
-                st.markdown(f"**{current_title_en or '—'}**")
-                st.write(current_content_en or "—")
+            with st.expander(
+                "目前英文翻譯 / Current English Translation"
+            ):
+                if (
+                    current_title_en
+                    and current_content_en
+                    and current_title_en != str(edit_item.get("title") or "")
+                    and current_content_en
+                    != str(edit_item.get("content") or "")
+                ):
+                    st.markdown(f"**{current_title_en}**")
+                    st.write(current_content_en)
+                else:
+                    st.warning(
+                        "目前儲存的英文內容仍是中文或尚未完成翻譯，"
+                        "請按下方按鈕重新翻譯。"
+                    )
 
             edit_col1, edit_col2 = st.columns(2)
             with edit_col1:
@@ -1534,7 +1555,7 @@ def admin_panel():
             )
 
             if st.button(
-                "重新翻譯並儲存公告修改",
+                "強制重新翻譯為英文並儲存",
                 key="announcement_edit_save",
             ):
                 if not edit_title.strip() or not edit_content.strip():
@@ -1549,6 +1570,14 @@ def admin_panel():
                             )
                             edit_content_en = translate_zh_to_en(
                                 edit_content.strip()
+                            )
+
+                        if (
+                            edit_title_en == edit_title.strip()
+                            or edit_content_en == edit_content.strip()
+                        ):
+                            raise RuntimeError(
+                                "翻譯服務回傳了原始中文，系統已阻止儲存。"
                             )
 
                         updated = update_bilingual_announcement(
@@ -1640,7 +1669,7 @@ def admin_panel():
             )
 
 
-st.set_page_config(page_title="AU-PCRS V7.0.4",layout="wide")
+st.set_page_config(page_title="AU-PCRS V7.0.5",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default

@@ -1,29 +1,32 @@
-# AU-PCRS V7.0.4 AI Pro NameError Hotfix
+# AU-PCRS V7.0.5 Translation Validation Hotfix
 
 ## 修正內容
 
-修正管理員後台開啟 AI Center 時出現：
-
-```text
-NameError: ai_pro_center is not defined
-```
+修正自動英文翻譯仍儲存中文原文的問題。
 
 ### 原因
-V7.0.3 在合併公告相容性修正時，AI Pro 的下列函式沒有完整保留：
-
-- ai_pro_center
-- demand_forecast_panel
-- approval_assistant_panel
-- utilization_heatmap_panel
-- ai_chat_panel
-- tv_mode_page
+部分情況下，Google Translate wrapper 使用 `source="auto"` 時可能沒有
+真正翻譯，卻直接回傳原始中文文字。舊版沒有檢查翻譯結果，因此把中文
+內容存入 `title_en`、`content_en`。
 
 ### 本版處理
-- 完整補回 AI Pro 功能。
-- 保留中文公告自動翻譯。
-- 保留雙語公告顯示。
-- 保留 Import Compatibility 修正。
-- TV 營運看板同步顯示中英文公告。
+- 優先使用 `source="zh-TW"` 翻譯繁體中文。
+- 失敗時依序重試 `zh-CN`、`auto`。
+- 公告內容逐行翻譯，以保留條列與換行。
+- 檢查翻譯是否與中文原文相同。
+- 檢查英文結果中的中文字比例。
+- 無效翻譯會被拒絕，不會覆蓋資料庫。
+- 後台會提示目前英文欄位仍是中文。
+- 新增「強制重新翻譯為英文並儲存」按鈕。
 
-## 部署
-請將 ZIP 內全部檔案一次覆蓋 GitHub Repository 根目錄。
+## 既有公告修復
+
+部署後進入：
+
+`Announcements / 公告 → 編輯雙語公告`
+
+選擇既有公告，按：
+
+`強制重新翻譯為英文並儲存`
+
+即可覆蓋先前錯誤儲存的中文英文欄位。

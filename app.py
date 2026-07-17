@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import database as database_module
+from sqlalchemy import insert, select, text, update
 
 from database import (
     add_course_blocks, cancel_booking, check_booking_conflict, create_booking,
@@ -16,13 +18,131 @@ from database import (
     get_announcements, get_audit_logs, get_booking_by_id, get_classrooms,
     get_closures, get_course_blocks, get_course_semesters, get_dashboard_counts,
     get_setting, get_user_bookings, get_room_statuses, get_booking_statistics, get_week_schedule, get_ai_insight_data, get_monthly_booking_counts, search_system_records, find_available_rooms, get_usage_heatmap, get_room_utilization, forecast_room_demand, get_approval_recommendation, get_tv_dashboard_data, import_authorized_users, init_db,
-    record_login, record_logout, review_booking, save_announcement, update_announcement_bilingual,
+    record_login, record_logout, review_booking, save_announcement,
     save_classroom, save_closure, save_open_period, set_course_semester_active,
     set_setting, verify_authorized_user_by_code,
 )
 from notifications import send_booking_email
 from reports import booking_pdf, booking_qr_png
 from translation import translate_zh_to_en
+
+
+def _ensure_announcement_bilingual_columns():
+    """Ensure English announcement columns exist during rolling deployments."""
+    engine = database_module.engine
+    if engine.dialect.name == "postgresql":
+        statements = [
+            (
+                "ALTER TABLE announcements "
+                "ADD COLUMN IF NOT EXISTS title_en VARCHAR(255)"
+            ),
+            (
+                "ALTER TABLE announcements "
+                "ADD COLUMN IF NOT EXISTS content_en TEXT"
+            ),
+        ]
+    else:
+        inspector = database_module.inspect(engine)
+        columns = {
+            column["name"]
+            for column in inspector.get_columns("announcements")
+        }
+        statements = []
+        if "title_en" not in columns:
+            statements.append(
+                "ALTER TABLE announcements ADD COLUMN title_en VARCHAR(255)"
+            )
+        if "content_en" not in columns:
+            statements.append(
+                "ALTER TABLE announcements ADD COLUMN content_en TEXT"
+            )
+
+    if statements:
+        with engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+
+
+def save_bilingual_announcement(
+    title,
+    content,
+    title_en,
+    content_en,
+    start_date,
+    end_date,
+    is_active=True,
+):
+    """Save through the current database module without requiring a new import."""
+    _ensure_announcement_bilingual_columns()
+    table = database_module.announcements
+
+    with database_module.engine.begin() as connection:
+        connection.execute(
+            insert(table).values(
+                title=title,
+                content=content,
+                title_en=title_en,
+                content_en=content_en,
+                start_date=database_module.as_date(start_date),
+                end_date=database_module.as_date(end_date),
+                is_active=bool(is_active),
+                created_at=datetime.now(),
+            )
+        )
+
+    database_module.log_action(
+        "CREATE",
+        "announcement",
+        title,
+        f"{start_date}~{end_date}",
+    )
+
+
+def update_bilingual_announcement(
+    announcement_id,
+    title,
+    content,
+    title_en,
+    content_en,
+    start_date,
+    end_date,
+    is_active=True,
+):
+    """Update an announcement even if database.py is temporarily an older version."""
+    _ensure_announcement_bilingual_columns()
+    announcement_id = int(announcement_id)
+    table = database_module.announcements
+
+    with database_module.engine.begin() as connection:
+        existing = connection.execute(
+            select(table.c.id).where(table.c.id == announcement_id)
+        ).first()
+        if not existing:
+            return 0
+
+        result = connection.execute(
+            update(table)
+            .where(table.c.id == announcement_id)
+            .values(
+                title=title,
+                content=content,
+                title_en=title_en,
+                content_en=content_en,
+                start_date=database_module.as_date(start_date),
+                end_date=database_module.as_date(end_date),
+                is_active=bool(is_active),
+            )
+        )
+
+    updated = result.rowcount or 0
+    if updated:
+        database_module.log_action(
+            "UPDATE",
+            "announcement",
+            str(announcement_id),
+            f"title={title}",
+        )
+    return updated
 
 BASE_DIR = Path(__file__).parent
 PSY_LOGO = BASE_DIR / "assets" / "psychology_logo.jpg"
@@ -218,7 +338,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V7.0.2 Auto Translation</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V7.0.3 Import Compatibility</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -970,7 +1090,7 @@ def admin_panel():
                     if not title_en or not content_en:
                         st.error("英文翻譯未完成，請稍後再試。")
                     else:
-                        save_announcement(
+                        save_bilingual_announcement(
                             title.strip(),
                             content.strip(),
                             title_en,
@@ -1067,7 +1187,7 @@ def admin_panel():
                                 edit_content.strip()
                             )
 
-                        updated = update_announcement_bilingual(
+                        updated = update_bilingual_announcement(
                             edit_item["id"],
                             edit_title.strip(),
                             edit_content.strip(),
@@ -1156,7 +1276,7 @@ def admin_panel():
             )
 
 
-st.set_page_config(page_title="AU-PCRS V7.0.2",layout="wide")
+st.set_page_config(page_title="AU-PCRS V7.0.3",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default

@@ -150,6 +150,8 @@ announcements = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("title", String(255), nullable=False),
     Column("content", Text, nullable=False),
+    Column("title_en", String(255)),
+    Column("content_en", Text),
     Column("start_date", Date, nullable=False),
     Column("end_date", Date, nullable=False),
     Column("is_active", Boolean, nullable=False, default=True),
@@ -187,59 +189,90 @@ def rows(result):
 
 def _migrate_existing_schema():
     inspector = inspect(engine)
-    if "bookings" not in inspector.get_table_names():
-        return
-
-    existing = {col["name"] for col in inspector.get_columns("bookings")}
-    additions = {
-        "review_note": "TEXT",
-        "reviewed_at": "TIMESTAMP",
-        "reviewed_by": "VARCHAR(100)",
-        "qr_token": "VARCHAR(100)",
-    }
+    table_names = set(inspector.get_table_names())
 
     with engine.begin() as conn:
-        for name, sql_type in additions.items():
-            if name not in existing:
-                if engine.dialect.name == "postgresql":
-                    conn.execute(
-                        text(
-                            f'ALTER TABLE bookings '
-                            f'ADD COLUMN IF NOT EXISTS {name} {sql_type}'
-                        )
-                    )
-                else:
-                    conn.execute(
-                        text(f'ALTER TABLE bookings ADD COLUMN {name} {sql_type}')
-                    )
+        if "bookings" in table_names:
+            existing = {
+                col["name"]
+                for col in inspector.get_columns("bookings")
+            }
+            additions = {
+                "review_note": "TEXT",
+                "reviewed_at": "TIMESTAMP",
+                "reviewed_by": "VARCHAR(100)",
+                "qr_token": "VARCHAR(100)",
+            }
 
-        # Earlier AU-PCRS versions may have created a CHECK constraint that only
-        # allowed statuses such as "有效" and "已取消". V4/V5 added workflow
-        # statuses including 待審核、已核准、已退回、已完成. SQLAlchemy
-        # create_all() does not replace an existing constraint, so approving a
-        # booking can raise IntegrityError. Remove only legacy CHECK constraints
-        # whose SQL expression references the status column.
-        if engine.dialect.name == "postgresql":
-            refreshed_inspector = inspect(engine)
-            for constraint in refreshed_inspector.get_check_constraints("bookings"):
-                constraint_name = constraint.get("name")
-                sql_text = (constraint.get("sqltext") or "").lower()
-                if constraint_name and "status" in sql_text:
-                    safe_name = constraint_name.replace('"', '""')
-                    conn.execute(
-                        text(
-                            f'ALTER TABLE bookings '
-                            f'DROP CONSTRAINT IF EXISTS "{safe_name}"'
+            for name, sql_type in additions.items():
+                if name not in existing:
+                    if engine.dialect.name == "postgresql":
+                        conn.execute(
+                            text(
+                                f'ALTER TABLE bookings '
+                                f'ADD COLUMN IF NOT EXISTS {name} {sql_type}'
+                            )
                         )
-                    )
+                    else:
+                        conn.execute(
+                            text(
+                                f'ALTER TABLE bookings '
+                                f'ADD COLUMN {name} {sql_type}'
+                            )
+                        )
 
-            # Keep a valid default for new records after removing old constraints.
-            conn.execute(
-                text(
-                    "ALTER TABLE bookings "
-                    "ALTER COLUMN status SET DEFAULT '待審核'"
+            if engine.dialect.name == "postgresql":
+                refreshed_inspector = inspect(engine)
+                for constraint in refreshed_inspector.get_check_constraints(
+                    "bookings"
+                ):
+                    constraint_name = constraint.get("name")
+                    sql_text = (
+                        constraint.get("sqltext") or ""
+                    ).lower()
+                    if constraint_name and "status" in sql_text:
+                        safe_name = constraint_name.replace('"', '""')
+                        conn.execute(
+                            text(
+                                f'ALTER TABLE bookings '
+                                f'DROP CONSTRAINT IF EXISTS '
+                                f'"{safe_name}"'
+                            )
+                        )
+
+                conn.execute(
+                    text(
+                        "ALTER TABLE bookings "
+                        "ALTER COLUMN status SET DEFAULT '待審核'"
+                    )
                 )
-            )
+
+        if "announcements" in table_names:
+            announcement_columns = {
+                col["name"]
+                for col in inspector.get_columns("announcements")
+            }
+            announcement_additions = {
+                "title_en": "VARCHAR(255)",
+                "content_en": "TEXT",
+            }
+
+            for name, sql_type in announcement_additions.items():
+                if name not in announcement_columns:
+                    if engine.dialect.name == "postgresql":
+                        conn.execute(
+                            text(
+                                f'ALTER TABLE announcements '
+                                f'ADD COLUMN IF NOT EXISTS {name} {sql_type}'
+                            )
+                        )
+                    else:
+                        conn.execute(
+                            text(
+                                f'ALTER TABLE announcements '
+                                f'ADD COLUMN {name} {sql_type}'
+                            )
+                        )
 
 
 def init_db():
@@ -738,14 +771,81 @@ def cancel_booking(booking_id, cancel_reason):
     log_action("CANCEL", "booking", booking_id, cancel_reason)
 
 
-def save_announcement(title, content, start_date, end_date, is_active=True):
+def save_announcement(
+    title,
+    content,
+    title_en,
+    content_en,
+    start_date,
+    end_date,
+    is_active=True,
+):
     with engine.begin() as conn:
-        conn.execute(insert(announcements).values(
-            title=title, content=content,
-            start_date=as_date(start_date), end_date=as_date(end_date),
-            is_active=bool(is_active), created_at=datetime.now(),
-        ))
-    log_action("CREATE", "announcement", title, f"{start_date}~{end_date}")
+        conn.execute(
+            insert(announcements).values(
+                title=title,
+                content=content,
+                title_en=title_en,
+                content_en=content_en,
+                start_date=as_date(start_date),
+                end_date=as_date(end_date),
+                is_active=bool(is_active),
+                created_at=datetime.now(),
+            )
+        )
+    log_action(
+        "CREATE",
+        "announcement",
+        title,
+        f"{start_date}~{end_date}",
+    )
+
+
+def update_announcement_bilingual(
+    announcement_id,
+    title,
+    content,
+    title_en,
+    content_en,
+    start_date,
+    end_date,
+    is_active=True,
+):
+    announcement_id = int(announcement_id)
+
+    with engine.begin() as conn:
+        existing = conn.execute(
+            select(announcements.c.id).where(
+                announcements.c.id == announcement_id
+            )
+        ).first()
+
+        if not existing:
+            return 0
+
+        result = conn.execute(
+            update(announcements)
+            .where(announcements.c.id == announcement_id)
+            .values(
+                title=title,
+                content=content,
+                title_en=title_en,
+                content_en=content_en,
+                start_date=as_date(start_date),
+                end_date=as_date(end_date),
+                is_active=bool(is_active),
+            )
+        )
+
+    updated = result.rowcount or 0
+    if updated:
+        log_action(
+            "UPDATE",
+            "announcement",
+            str(announcement_id),
+            f"title={title}",
+        )
+    return updated
 
 
 def get_announcements(active_only=False):
@@ -1136,6 +1236,108 @@ def get_monthly_booking_counts(months=6):
         {"month": key, "count": value}
         for key, value in sorted(counts.items())
     ]
+
+
+
+def get_usage_heatmap(days=90):
+    days=max(7,min(int(days),3650))
+    first_day=date.today()-timedelta(days=days-1)
+    with engine.connect() as conn:
+        data=rows(conn.execute(select(bookings.c.booking_date,bookings.c.start_time).where(and_(
+            bookings.c.booking_date>=first_day,
+            bookings.c.status.in_(["待審核","已核准","有效","已完成"]),
+        ))))
+    counts={}
+    for row in data:
+        key=(row["booking_date"].weekday(),int(str(row["start_time"])[:2]))
+        counts[key]=counts.get(key,0)+1
+    weekdays=["星期一","星期二","星期三","星期四","星期五","星期六","星期日"]
+    return [{"weekday":weekdays[d],"hour":f"{h:02d}:00","count":counts.get((d,h),0)}
+            for d in range(7) for h in range(8,23)]
+
+
+def get_room_utilization(days=90):
+    days=max(7,min(int(days),3650))
+    first_day=date.today()-timedelta(days=days-1)
+    with engine.connect() as conn:
+        data=rows(conn.execute(select(bookings.c.room,bookings.c.start_time,bookings.c.end_time).where(and_(
+            bookings.c.booking_date>=first_day,
+            bookings.c.status.in_(["待審核","已核准","有效","已完成"]),
+        ))))
+    booked={}
+    for row in data:
+        start_dt=datetime.combine(date.today(),row["start_time"])
+        end_dt=datetime.combine(date.today(),row["end_time"])
+        booked[row["room"]]=booked.get(row["room"],0)+max((end_dt-start_dt).total_seconds()/3600,0)
+    capacity=days*14
+    result=[]
+    for room in get_classrooms(active_only=True):
+        hours=booked.get(room["room_name"],0)
+        result.append({"room":room["room_name"],"booked_hours":round(hours,1),
+                       "utilization":round(min(hours/capacity*100 if capacity else 0,100),1)})
+    return sorted(result,key=lambda r:r["utilization"],reverse=True)
+
+
+def forecast_room_demand(days_ahead=7,history_days=90):
+    first_day=date.today()-timedelta(days=max(28,int(history_days))-1)
+    with engine.connect() as conn:
+        data=rows(conn.execute(select(bookings.c.room,bookings.c.booking_date).where(and_(
+            bookings.c.booking_date>=first_day,
+            bookings.c.status.in_(["待審核","已核准","有效","已完成"]),
+        ))))
+    occurrences={i:0 for i in range(7)}
+    cursor=first_day
+    while cursor<=date.today():
+        occurrences[cursor.weekday()]+=1
+        cursor+=timedelta(days=1)
+    counts={}
+    for row in data:
+        key=(row["room"],row["booking_date"].weekday())
+        counts[key]=counts.get(key,0)+1
+    rooms=[r["room_name"] for r in get_classrooms(active_only=True)]
+    result=[]
+    for offset in range(1,max(1,min(int(days_ahead),31))+1):
+        target=date.today()+timedelta(days=offset); wd=target.weekday()
+        for room in rooms:
+            predicted=counts.get((room,wd),0)/max(occurrences[wd],1)
+            result.append({"date":str(target),"weekday":["週一","週二","週三","週四","週五","週六","週日"][wd],
+                           "room":room,"predicted_bookings":round(predicted,2),
+                           "risk":"高" if predicted>=2 else "中" if predicted>=1 else "低"})
+    return result
+
+
+def get_approval_recommendation(booking_id):
+    booking=get_booking_by_id(booking_id)
+    if not booking:return None
+    conflict=check_booking_conflict(booking["booking_date"],booking["room"],booking["start_time"],
+                                    booking["end_time"],exclude_booking_id=booking_id)
+    period=get_active_open_period()
+    closure=get_closure_for(booking["booking_date"],booking["room"])
+    user=verify_authorized_user_by_code(booking["applicant_type"],booking["identification_code"])
+    checks={"identity_valid":bool(user),
+            "in_open_period":bool(period and period["start_date"]<=booking["booking_date"]<=period["end_date"]),
+            "no_conflict":conflict is None,"not_closed":closure is None,
+            "contact_complete":bool(booking.get("phone") and booking.get("email")),
+            "reason_complete":bool((booking.get("reason") or "").strip())}
+    score=round(sum(checks.values())/len(checks)*100,1)
+    reasons=[]
+    if not checks["identity_valid"]:reasons.append("申請人不在啟用名冊")
+    if not checks["in_open_period"]:reasons.append("不在開放借用期間")
+    if not checks["no_conflict"]:reasons.append(f'時段衝突：{conflict["detail"]}')
+    if not checks["not_closed"]:reasons.append(f'停借：{closure["reason"]}')
+    if not checks["contact_complete"]:reasons.append("聯絡資料不完整")
+    if not checks["reason_complete"]:reasons.append("借用事由未填寫")
+    return {"booking":booking,"checks":checks,"score":score,
+            "recommendation":"建議核准" if score==100 else "建議人工確認","reasons":reasons}
+
+
+def get_tv_dashboard_data():
+    today=date.today()
+    bookings_today=[r for r in get_all_bookings({"date_from":str(today),"date_to":str(today)})
+                    if r["status"] in ["待審核","已核准","有效","已完成"]]
+    return {"date":str(today),"room_statuses":get_room_statuses(today),
+            "upcoming":sorted(bookings_today,key=lambda r:r["start_time"])[:10],
+            "announcements":get_announcements(active_only=True)[:5]}
 
 
 def get_dashboard_counts():

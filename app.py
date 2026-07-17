@@ -1,3 +1,4 @@
+import html
 import io
 import os
 import re
@@ -14,13 +15,14 @@ from database import (
     get_active_open_period, get_all_authorized_users, get_all_bookings,
     get_announcements, get_audit_logs, get_booking_by_id, get_classrooms,
     get_closures, get_course_blocks, get_course_semesters, get_dashboard_counts,
-    get_setting, get_user_bookings, get_room_statuses, get_booking_statistics, get_week_schedule, get_ai_insight_data, get_monthly_booking_counts, search_system_records, find_available_rooms, import_authorized_users, init_db,
-    record_login, record_logout, review_booking, save_announcement,
+    get_setting, get_user_bookings, get_room_statuses, get_booking_statistics, get_week_schedule, get_ai_insight_data, get_monthly_booking_counts, search_system_records, find_available_rooms, get_usage_heatmap, get_room_utilization, forecast_room_demand, get_approval_recommendation, get_tv_dashboard_data, import_authorized_users, init_db,
+    record_login, record_logout, review_booking, save_announcement, update_announcement_bilingual,
     save_classroom, save_closure, save_open_period, set_course_semester_active,
     set_setting, verify_authorized_user_by_code,
 )
 from notifications import send_booking_email
 from reports import booking_pdf, booking_qr_png
+from translation import translate_zh_to_en
 
 BASE_DIR = Path(__file__).parent
 PSY_LOGO = BASE_DIR / "assets" / "psychology_logo.jpg"
@@ -41,7 +43,7 @@ TEXT = {
         "login_title":"系統登入","faculty":"教師","student":"學生","admin":"管理員",
         "id_code":"教師職編／學生學號","admin_password":"管理員密碼",
         "login":"登入","logout":"登出","home":"首頁","my_bookings":"我的借用",
-        "reserve":"我要借教室","calendar":"教室行事曆","weekly":"視覺化週課表","ai_assistant":"AI 智慧助理","admin_panel":"管理員後台",
+        "reserve":"我要借教室","calendar":"教室行事曆","weekly":"視覺化週課表","ai_assistant":"AI 智慧助理","tv_mode":"TV 營運看板","admin_panel":"管理員後台",
         "invalid_user":"身分驗證失敗，請確認名冊與辨識碼。","invalid_admin":"管理員密碼錯誤。",
         "date":"借用日期","room":"教室","start":"開始時間","end":"結束時間",
         "phone":"聯絡手機","email":"聯絡信箱","reason":"借用事由","submit":"送出申請",
@@ -56,7 +58,7 @@ TEXT = {
         "login_title":"System Login","faculty":"Faculty","student":"Student","admin":"Administrator",
         "id_code":"Employee ID / Student ID","admin_password":"Administrator Password",
         "login":"Log In","logout":"Log Out","home":"Home","my_bookings":"My Reservations",
-        "reserve":"Reserve a Classroom","calendar":"Classroom Calendar","weekly":"Weekly Schedule","ai_assistant":"AI Assistant","admin_panel":"Admin Panel",
+        "reserve":"Reserve a Classroom","calendar":"Classroom Calendar","weekly":"Weekly Schedule","ai_assistant":"AI Assistant","tv_mode":"TV Operations Board","admin_panel":"Admin Panel",
         "invalid_user":"Identity verification failed. Please check the roster and code.",
         "invalid_admin":"Incorrect administrator password.","date":"Reservation Date",
         "room":"Classroom","start":"Start Time","end":"End Time","phone":"Mobile Phone",
@@ -195,6 +197,11 @@ def apply_style():
     .ai-title{font-size:1.25rem;font-weight:850;color:#35188E}
     .ai-insight{padding:12px 14px;border-left:5px solid #4B2BD7;background:#fff;border-radius:10px;margin:9px 0}
     .search-result{padding:12px 14px;border:1px solid #e5dfff;border-radius:12px;background:#fff;margin-bottom:9px}
+    .tv-board{background:#111827;color:white;padding:24px;border-radius:22px}
+    .tv-title{font-size:2rem;font-weight:900;margin-bottom:16px}
+    .tv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+    .tv-card{background:#1F2937;padding:18px;border-radius:16px;border:1px solid #374151}
+    .tv-card h3{margin:0 0 10px 0;color:#C4B5FD}
     @media (max-width:768px){
       .hero{padding:16px}.h1{font-size:1.7rem}.h2{font-size:1.35rem}
       .room-grid{grid-template-columns:1fr}
@@ -211,7 +218,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V6.0 Enterprise AI</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V7.0.2 Auto Translation</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -301,7 +308,38 @@ def announcements_block():
     if items:
         st.markdown("### 最新公告 / Announcements")
         for item in items:
-            st.markdown(f'<div class="announcement"><b>{item["title"]}</b><br>{item["content"]}</div>', unsafe_allow_html=True)
+            title_zh = html.escape(str(item.get("title") or ""))
+            content_zh = html.escape(
+                str(item.get("content") or "")
+            ).replace("\n", "<br>")
+            title_en = html.escape(
+                str(item.get("title_en") or "")
+            )
+            content_en = html.escape(
+                str(item.get("content_en") or "")
+            ).replace("\n", "<br>")
+
+            english_section = (
+                f'<div style="margin-top:10px;padding-top:10px;'
+                f'border-top:1px solid #d9d2ff;">'
+                f'<b>{title_en}</b><br>{content_en}</div>'
+                if title_en and content_en
+                else (
+                    '<div style="margin-top:10px;padding-top:10px;'
+                    'border-top:1px solid #d9d2ff;color:#7a748a;">'
+                    '<b>English</b><br>'
+                    'English translation has not been added yet.'
+                    '</div>'
+                )
+            )
+
+            st.markdown(
+                '<div class="announcement">'
+                f'<b>{title_zh}</b><br>{content_zh}'
+                f'{english_section}'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
 
 
@@ -613,18 +651,8 @@ def availability_assistant(t, key_prefix):
 
 
 def ai_assistant_page(t):
-    st.markdown("## AU-PCRS AI 智慧助理")
-    tabs = st.tabs([
-        "AI 分析",
-        "智慧搜尋",
-        "空間推薦",
-    ])
-    with tabs[0]:
-        ai_insight_panel("user_ai")
-    with tabs[2]:
-        smart_search_panel("user_ai")
-    with tabs[3]:
-        availability_assistant(t, "user_ai")
+    st.markdown("## AU-PCRS V7 AI 智慧助理")
+    ai_pro_center(t, "user_ai_pro")
 
 
 def home(t):
@@ -762,11 +790,9 @@ def admin_panel():
     with tabs[0]:
         home(TEXT[st.session_state.language])
     with tabs[1]:
-        ai_insight_panel("admin_ai")
-        smart_search_panel("admin_ai")
-        availability_assistant(
+        ai_pro_center(
             TEXT[st.session_state.language],
-            "admin_ai",
+            "admin_ai_pro",
         )
     with tabs[2]:
         analytics_dashboard("admin_analytics")
@@ -899,21 +925,69 @@ def admin_panel():
                     )
         else: st.info("查無借用紀錄")
     with tabs[8]:
-        title=st.text_input("公告標題")
-        content=st.text_area("公告內容")
-        a,b=st.columns(2)
-        with a: sd=st.date_input("公告開始",value=date.today(),key="ann_sd")
-        with b: ed=st.date_input("公告結束",value=date.today()+timedelta(days=30),key="ann_ed")
-        if st.button("發布公告"):
+        st.markdown("## 新增公告 / New Announcement")
+        st.caption(
+            "管理員只需輸入中文；發布時系統會自動產生英文翻譯。"
+        )
+
+        title = st.text_input(
+            "中文公告標題",
+            key="announcement_title_zh",
+        )
+        content = st.text_area(
+            "中文公告內容",
+            key="announcement_content_zh",
+        )
+
+        a, b = st.columns(2)
+        with a:
+            sd = st.date_input(
+                "公告開始",
+                value=date.today(),
+                key="ann_sd",
+            )
+        with b:
+            ed = st.date_input(
+                "公告結束",
+                value=date.today() + timedelta(days=30),
+                key="ann_ed",
+            )
+
+        if st.button(
+            "自動翻譯並發布公告",
+            key="announcement_publish_button",
+        ):
             if not title.strip() or not content.strip():
-                st.error("請輸入公告標題與內容。")
+                st.error("請輸入中文公告標題與內容。")
             elif sd > ed:
                 st.error("公告開始日期不可晚於結束日期。")
             else:
-                save_announcement(
-                    title.strip(), content.strip(), str(sd), str(ed), True
-                )
-                st.rerun()
+                try:
+                    with st.spinner("正在產生英文翻譯…"):
+                        title_en = translate_zh_to_en(title.strip())
+                        content_en = translate_zh_to_en(content.strip())
+
+                    if not title_en or not content_en:
+                        st.error("英文翻譯未完成，請稍後再試。")
+                    else:
+                        save_announcement(
+                            title.strip(),
+                            content.strip(),
+                            title_en,
+                            content_en,
+                            str(sd),
+                            str(ed),
+                            True,
+                        )
+                        st.success("中英文公告已自動產生並發布。")
+                        st.rerun()
+                except Exception as exc:
+                    st.error(
+                        "自動翻譯失敗，公告尚未發布。"
+                        "請確認 Streamlit Cloud 可以連線至翻譯服務後再試。"
+                    )
+                    st.caption(str(exc))
+
         items = get_announcements()
         if items:
             st.dataframe(
@@ -921,6 +995,98 @@ def admin_panel():
                 use_container_width=True,
                 hide_index=True,
             )
+
+            st.markdown("### 編輯雙語公告 / Edit Bilingual Announcement")
+
+            edit_options = {
+                (
+                    f'#{item["id"]}｜{item["title"]}｜'
+                    f'{item["start_date"]}～{item["end_date"]}'
+                ): item
+                for item in items
+            }
+            edit_label = st.selectbox(
+                "選擇要編輯的公告",
+                list(edit_options.keys()),
+                key="announcement_edit_select",
+            )
+            edit_item = edit_options[edit_label]
+
+            edit_title = st.text_input(
+                "編輯中文標題",
+                value=str(edit_item.get("title") or ""),
+                key=f'announcement_edit_title_{edit_item["id"]}',
+            )
+            edit_content = st.text_area(
+                "編輯中文內容",
+                value=str(edit_item.get("content") or ""),
+                key=f'announcement_edit_content_{edit_item["id"]}',
+            )
+            current_title_en = str(edit_item.get("title_en") or "")
+            current_content_en = str(edit_item.get("content_en") or "")
+
+            with st.expander("目前英文翻譯 / Current English Translation"):
+                st.markdown(f"**{current_title_en or '—'}**")
+                st.write(current_content_en or "—")
+
+            edit_col1, edit_col2 = st.columns(2)
+            with edit_col1:
+                edit_start = st.date_input(
+                    "編輯公告開始",
+                    value=edit_item["start_date"],
+                    key=f'announcement_edit_start_{edit_item["id"]}',
+                )
+            with edit_col2:
+                edit_end = st.date_input(
+                    "編輯公告結束",
+                    value=edit_item["end_date"],
+                    key=f'announcement_edit_end_{edit_item["id"]}',
+                )
+
+            edit_active = st.checkbox(
+                "公告啟用",
+                value=bool(edit_item.get("is_active")),
+                key=f'announcement_edit_active_{edit_item["id"]}',
+            )
+
+            if st.button(
+                "重新翻譯並儲存公告修改",
+                key="announcement_edit_save",
+            ):
+                if not edit_title.strip() or not edit_content.strip():
+                    st.error("請輸入中文公告標題與內容。")
+                elif edit_start > edit_end:
+                    st.error("公告開始日期不可晚於結束日期。")
+                else:
+                    try:
+                        with st.spinner("正在重新產生英文翻譯…"):
+                            edit_title_en = translate_zh_to_en(
+                                edit_title.strip()
+                            )
+                            edit_content_en = translate_zh_to_en(
+                                edit_content.strip()
+                            )
+
+                        updated = update_announcement_bilingual(
+                            edit_item["id"],
+                            edit_title.strip(),
+                            edit_content.strip(),
+                            edit_title_en,
+                            edit_content_en,
+                            str(edit_start),
+                            str(edit_end),
+                            edit_active,
+                        )
+                        if updated:
+                            st.success("公告及英文翻譯已更新。")
+                            st.rerun()
+                        else:
+                            st.warning("找不到指定公告。")
+                    except Exception as exc:
+                        st.error(
+                            "自動翻譯失敗，公告修改尚未儲存。"
+                        )
+                        st.caption(str(exc))
 
             st.markdown("### 刪除既有公告")
             announcement_options = {
@@ -990,7 +1156,7 @@ def admin_panel():
             )
 
 
-st.set_page_config(page_title="AU-PCRS V6.0",layout="wide")
+st.set_page_config(page_title="AU-PCRS V7.0.2",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default
@@ -1014,7 +1180,8 @@ with st.sidebar:
         st.session_state.user=None; st.session_state.admin=False; st.rerun()
 
 page=st.sidebar.radio("Menu / 選單",
-    [t["home"],t["admin_panel"]] if st.session_state.admin
+    [t["home"], t["admin_panel"], t["tv_mode"]]
+    if st.session_state.admin
     else [
         t["home"],
         t["my_bookings"],
@@ -1022,6 +1189,7 @@ page=st.sidebar.radio("Menu / 選單",
         t["calendar"],
         t["weekly"],
         t["ai_assistant"],
+        t["tv_mode"],
     ]
 )
 
@@ -1031,5 +1199,6 @@ elif page==t["reserve"]: reserve(t)
 elif page==t["calendar"]: calendar_view(t)
 elif page==t["weekly"]: weekly_schedule_view(t, "user_weekly")
 elif page==t["ai_assistant"]: ai_assistant_page(t)
+elif page==t["tv_mode"]: tv_mode_page()
 else: admin_panel()
 footer()

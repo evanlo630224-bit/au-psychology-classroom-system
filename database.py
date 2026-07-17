@@ -947,6 +947,197 @@ def get_week_schedule(start_date, room):
     )
 
 
+
+def search_system_records(keyword, limit=100):
+    """Search bookings, users, classrooms and announcements."""
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return []
+
+    pattern = f"%{keyword}%"
+    results = []
+
+    with engine.connect() as conn:
+        booking_rows = rows(
+            conn.execute(
+                select(bookings).where(
+                    or_(
+                        bookings.c.booking_id.ilike(pattern),
+                        bookings.c.applicant_name.ilike(pattern),
+                        bookings.c.identification_code.ilike(pattern),
+                        bookings.c.room.ilike(pattern),
+                        bookings.c.reason.ilike(pattern),
+                        bookings.c.status.ilike(pattern),
+                    )
+                ).order_by(bookings.c.booking_date.desc()).limit(limit)
+            )
+        )
+        for row in booking_rows:
+            results.append({
+                "category": "借用",
+                "title": row["booking_id"],
+                "summary": (
+                    f'{row["booking_date"]} {row["start_time"]}-{row["end_time"]} '
+                    f'{row["room"]}｜{row["applicant_name"]}｜{row["status"]}'
+                ),
+            })
+
+        user_rows = rows(
+            conn.execute(
+                select(authorized_users).where(
+                    or_(
+                        authorized_users.c.identification_code.ilike(pattern),
+                        authorized_users.c.name.ilike(pattern),
+                        authorized_users.c.email.ilike(pattern),
+                        authorized_users.c.user_type.ilike(pattern),
+                    )
+                ).order_by(authorized_users.c.user_type).limit(limit)
+            )
+        )
+        for row in user_rows:
+            results.append({
+                "category": "名冊",
+                "title": f'{row["name"]}（{row["user_type"]}）',
+                "summary": (
+                    f'{row["identification_code"]}｜'
+                    f'{row.get("email") or ""}｜{row["status"]}'
+                ),
+            })
+
+        room_rows = rows(
+            conn.execute(
+                select(classrooms).where(
+                    or_(
+                        classrooms.c.room_name.ilike(pattern),
+                        classrooms.c.location.ilike(pattern),
+                        classrooms.c.equipment.ilike(pattern),
+                    )
+                ).order_by(classrooms.c.room_name).limit(limit)
+            )
+        )
+        for row in room_rows:
+            results.append({
+                "category": "教室",
+                "title": row["room_name"],
+                "summary": (
+                    f'容量 {row.get("capacity") or "-"}｜'
+                    f'{row.get("location") or ""}｜{row["status"]}'
+                ),
+            })
+
+        announcement_rows = rows(
+            conn.execute(
+                select(announcements).where(
+                    or_(
+                        announcements.c.title.ilike(pattern),
+                        announcements.c.content.ilike(pattern),
+                    )
+                ).order_by(announcements.c.id.desc()).limit(limit)
+            )
+        )
+        for row in announcement_rows:
+            results.append({
+                "category": "公告",
+                "title": row["title"],
+                "summary": (
+                    f'{row["start_date"]}～{row["end_date"]}｜'
+                    f'{row["content"]}'
+                ),
+            })
+
+    return results[:limit]
+
+
+def find_available_rooms(target_date, start_time, end_time):
+    """Return active rooms without closure, course, or booking conflicts."""
+    target_date = as_date(target_date)
+    start_time = as_time(start_time)
+    end_time = as_time(end_time)
+    available = []
+
+    for room_row in get_classrooms(active_only=True):
+        room_name = room_row["room_name"]
+        conflict = check_booking_conflict(
+            target_date,
+            room_name,
+            start_time,
+            end_time,
+        )
+        if not conflict:
+            available.append({
+                "room_name": room_name,
+                "capacity": room_row.get("capacity"),
+                "location": room_row.get("location") or "",
+                "equipment": room_row.get("equipment") or "",
+            })
+
+    return available
+
+
+def get_ai_insight_data(days=30):
+    """Provide structured data for deterministic AI-style analysis."""
+    stats = get_booking_statistics(days)
+    rooms = get_classrooms(active_only=True)
+    room_statuses = get_room_statuses()
+
+    total_capacity = sum(
+        int(row.get("capacity") or 0)
+        for row in rooms
+    )
+    free_rooms = sum(
+        1 for row in room_statuses
+        if row["status"] == "可借用"
+    )
+    busy_rooms = len(room_statuses) - free_rooms
+
+    peak_room = stats["by_room"][0] if stats["by_room"] else None
+    peak_date = (
+        max(stats["by_date"], key=lambda row: row["count"])
+        if stats["by_date"]
+        else None
+    )
+
+    return {
+        "days": int(days),
+        "statistics": stats,
+        "room_count": len(rooms),
+        "total_capacity": total_capacity,
+        "free_rooms_now": free_rooms,
+        "busy_rooms_now": busy_rooms,
+        "peak_room": peak_room,
+        "peak_date": peak_date,
+    }
+
+
+def get_monthly_booking_counts(months=6):
+    months = max(1, min(int(months), 24))
+    start_month = date.today().replace(day=1)
+    for _ in range(months - 1):
+        start_month = (
+            start_month.replace(day=1) - timedelta(days=1)
+        ).replace(day=1)
+
+    with engine.connect() as conn:
+        booking_rows = rows(
+            conn.execute(
+                select(
+                    bookings.c.booking_date,
+                    bookings.c.status,
+                ).where(bookings.c.booking_date >= start_month)
+            )
+        )
+
+    counts = {}
+    for row in booking_rows:
+        month_key = row["booking_date"].strftime("%Y-%m")
+        counts[month_key] = counts.get(month_key, 0) + 1
+
+    return [
+        {"month": key, "count": value}
+        for key, value in sorted(counts.items())
+    ]
+
+
 def get_dashboard_counts():
     today = date.today()
     with engine.connect() as conn:

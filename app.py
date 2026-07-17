@@ -14,7 +14,7 @@ from database import (
     get_active_open_period, get_all_authorized_users, get_all_bookings,
     get_announcements, get_audit_logs, get_booking_by_id, get_classrooms,
     get_closures, get_course_blocks, get_course_semesters, get_dashboard_counts,
-    get_setting, get_user_bookings, get_room_statuses, get_booking_statistics, get_week_schedule, import_authorized_users, init_db,
+    get_setting, get_user_bookings, get_room_statuses, get_booking_statistics, get_week_schedule, get_ai_insight_data, get_monthly_booking_counts, search_system_records, find_available_rooms, import_authorized_users, init_db,
     record_login, record_logout, review_booking, save_announcement,
     save_classroom, save_closure, save_open_period, set_course_semester_active,
     set_setting, verify_authorized_user_by_code,
@@ -41,7 +41,7 @@ TEXT = {
         "login_title":"系統登入","faculty":"教師","student":"學生","admin":"管理員",
         "id_code":"教師職編／學生學號","admin_password":"管理員密碼",
         "login":"登入","logout":"登出","home":"首頁","my_bookings":"我的借用",
-        "reserve":"我要借教室","calendar":"教室行事曆","weekly":"視覺化週課表","admin_panel":"管理員後台",
+        "reserve":"我要借教室","calendar":"教室行事曆","weekly":"視覺化週課表","ai_assistant":"AI 智慧助理","admin_panel":"管理員後台",
         "invalid_user":"身分驗證失敗，請確認名冊與辨識碼。","invalid_admin":"管理員密碼錯誤。",
         "date":"借用日期","room":"教室","start":"開始時間","end":"結束時間",
         "phone":"聯絡手機","email":"聯絡信箱","reason":"借用事由","submit":"送出申請",
@@ -56,7 +56,7 @@ TEXT = {
         "login_title":"System Login","faculty":"Faculty","student":"Student","admin":"Administrator",
         "id_code":"Employee ID / Student ID","admin_password":"Administrator Password",
         "login":"Log In","logout":"Log Out","home":"Home","my_bookings":"My Reservations",
-        "reserve":"Reserve a Classroom","calendar":"Classroom Calendar","weekly":"Weekly Schedule","admin_panel":"Admin Panel",
+        "reserve":"Reserve a Classroom","calendar":"Classroom Calendar","weekly":"Weekly Schedule","ai_assistant":"AI Assistant","admin_panel":"Admin Panel",
         "invalid_user":"Identity verification failed. Please check the roster and code.",
         "invalid_admin":"Incorrect administrator password.","date":"Reservation Date",
         "room":"Classroom","start":"Start Time","end":"End Time","phone":"Mobile Phone",
@@ -191,6 +191,10 @@ def apply_style():
     .room-v5-status{font-weight:750;margin-top:10px}
     .status-free{color:#14833B}.status-busy{color:#E06700}.status-course{color:#1768D8}.status-closed{color:#C62828}
     .kpi-note{font-size:.86rem;color:#777184;margin-top:4px}
+    .ai-card{padding:20px;border:1px solid #dcd2ff;border-radius:18px;background:linear-gradient(135deg,#f4f0ff,#fff);box-shadow:0 8px 24px rgba(75,43,215,.08);margin-bottom:14px}
+    .ai-title{font-size:1.25rem;font-weight:850;color:#35188E}
+    .ai-insight{padding:12px 14px;border-left:5px solid #4B2BD7;background:#fff;border-radius:10px;margin:9px 0}
+    .search-result{padding:12px 14px;border:1px solid #e5dfff;border-radius:12px;background:#fff;margin-bottom:9px}
     @media (max-width:768px){
       .hero{padding:16px}.h1{font-size:1.7rem}.h2{font-size:1.35rem}
       .room-grid{grid-template-columns:1fr}
@@ -207,7 +211,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V5.0.5 Announcement Delete Hotfix</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V6.0 Enterprise AI</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -441,6 +445,188 @@ def weekly_schedule_view(t, key_prefix):
     )
 
 
+
+def build_ai_insights(days=30):
+    data = get_ai_insight_data(days)
+    stats = data["statistics"]
+    insights = []
+
+    if stats["total"] == 0:
+        insights.append("最近選定期間尚無借用資料，建議先完成課表與借用資料匯入。")
+        return insights
+
+    approval_rate = (
+        stats["approved"] / stats["total"] * 100
+        if stats["total"]
+        else 0
+    )
+    pending_rate = (
+        stats["pending"] / stats["total"] * 100
+        if stats["total"]
+        else 0
+    )
+
+    insights.append(
+        f'最近 {days} 天共有 {stats["total"]} 筆申請，'
+        f'核准或完成比例約 {approval_rate:.1f}%。'
+    )
+
+    if data["peak_room"]:
+        insights.append(
+            f'使用最頻繁的教室是 {data["peak_room"]["room"]}，'
+            f'共 {data["peak_room"]["count"]} 筆紀錄。'
+        )
+
+    if data["peak_date"]:
+        insights.append(
+            f'借用量最高的日期為 {data["peak_date"]["date"]}，'
+            f'共有 {data["peak_date"]["count"]} 筆。'
+        )
+
+    if pending_rate >= 25:
+        insights.append(
+            f'待審核比例達 {pending_rate:.1f}%，建議系辦優先處理待審核案件。'
+        )
+    elif stats["pending"] == 0:
+        insights.append("目前沒有待審核案件，審核流程維持順暢。")
+
+    if data["free_rooms_now"]:
+        insights.append(
+            f'目前共有 {data["free_rooms_now"]} 間教室可借用，'
+            f'{data["busy_rooms_now"]} 間正在使用、上課或停借。'
+        )
+    else:
+        insights.append("目前沒有可立即借用的教室，建議查詢其他時段。")
+
+    monthly = get_monthly_booking_counts(6)
+    if len(monthly) >= 2:
+        latest = monthly[-1]
+        previous = monthly[-2]
+        if previous["count"] > 0:
+            change = (
+                (latest["count"] - previous["count"])
+                / previous["count"]
+                * 100
+            )
+            direction = "增加" if change >= 0 else "減少"
+            insights.append(
+                f'{latest["month"]} 相較 {previous["month"]} '
+                f'借用量{direction} {abs(change):.1f}%。'
+            )
+
+    return insights
+
+
+def ai_insight_panel(key_prefix):
+    st.markdown("## AI 智慧分析 / AI Insights")
+    days = st.selectbox(
+        "分析期間",
+        [7, 30, 90, 180, 365],
+        index=1,
+        format_func=lambda value: f"最近 {value} 天",
+        key=f"{key_prefix}_ai_days",
+    )
+    insights = build_ai_insights(days)
+
+    st.markdown(
+        '<div class="ai-card"><div class="ai-title">'
+        'AU-PCRS 智慧營運摘要'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+    for insight in insights:
+        st.markdown(
+            f'<div class="ai-insight">{insight}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def smart_search_panel(key_prefix):
+    st.markdown("## 智慧搜尋 / Smart Search")
+    keyword = st.text_input(
+        "輸入借用編號、姓名、學號、教室、用途或公告關鍵字",
+        key=f"{key_prefix}_smart_search",
+    )
+    if not keyword.strip():
+        st.caption("例如：M502、王小明、910300510、心理統計、已核准")
+        return
+
+    results = search_system_records(keyword, limit=100)
+    if not results:
+        st.info("找不到符合條件的資料。")
+        return
+
+    st.success(f"找到 {len(results)} 筆結果")
+    for result in results:
+        st.markdown(
+            '<div class="search-result">'
+            f'<b>{result["category"]}｜{result["title"]}</b><br>'
+            f'{result["summary"]}'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def availability_assistant(t, key_prefix):
+    st.markdown("## AI 空間推薦 / Smart Availability Assistant")
+    st.caption("選擇日期與時段，系統會自動排除課程、借用與停借教室。")
+
+    left, middle, right = st.columns(3)
+    with left:
+        target_date = st.date_input(
+            t["date"],
+            value=date.today(),
+            key=f"{key_prefix}_available_date",
+        )
+    with middle:
+        start_value = st.selectbox(
+            t["start"],
+            [start for start, _ in TIME_SLOTS],
+            key=f"{key_prefix}_available_start",
+        )
+    with right:
+        end_value = st.selectbox(
+            t["end"],
+            [end for _, end in TIME_SLOTS],
+            key=f"{key_prefix}_available_end",
+        )
+
+    if start_value >= end_value:
+        st.warning("結束時間必須晚於開始時間。")
+        return
+
+    available = find_available_rooms(
+        str(target_date),
+        start_value,
+        end_value,
+    )
+    if not available:
+        st.error("此時段沒有可借用的教室。")
+        return
+
+    st.success(f"找到 {len(available)} 間可借用教室")
+    st.dataframe(
+        pd.DataFrame(available),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def ai_assistant_page(t):
+    st.markdown("## AU-PCRS AI 智慧助理")
+    tabs = st.tabs([
+        "AI 分析",
+        "智慧搜尋",
+        "空間推薦",
+    ])
+    with tabs[0]:
+        ai_insight_panel("user_ai")
+    with tabs[2]:
+        smart_search_panel("user_ai")
+    with tabs[3]:
+        availability_assistant(t, "user_ai")
+
+
 def home(t):
     announcements_block()
     counts = get_dashboard_counts()
@@ -461,6 +647,7 @@ def home(t):
 
     room_status_dashboard()
     analytics_dashboard("home")
+    ai_insight_panel("home")
 
 
 def my_bookings(t):
@@ -560,6 +747,7 @@ def calendar_view(t):
 def admin_panel():
     tabs=st.tabs([
         "Dashboard",
+        "AI Center / AI 智慧中心",
         "Analytics / 統計分析",
         "Roster / 名冊",
         "Classrooms / 教室",
@@ -574,12 +762,19 @@ def admin_panel():
     with tabs[0]:
         home(TEXT[st.session_state.language])
     with tabs[1]:
+        ai_insight_panel("admin_ai")
+        smart_search_panel("admin_ai")
+        availability_assistant(
+            TEXT[st.session_state.language],
+            "admin_ai",
+        )
+    with tabs[2]:
         analytics_dashboard("admin_analytics")
         weekly_schedule_view(
             TEXT[st.session_state.language],
             "admin_analytics",
         )
-    with tabs[2]:
+    with tabs[3]:
         kind=st.radio("名冊類別",["教師","學生"],horizontal=True)
         st.download_button("下載範本",roster_template_bytes(kind),f"{kind}名冊範本.xlsx")
         upload=st.file_uploader("上傳 Excel",type=["xlsx"],key=f"roster_{kind}")
@@ -610,7 +805,7 @@ def admin_panel():
             )
         else:
             st.info("目前尚未匯入教師或學生名冊。")
-    with tabs[3]:
+    with tabs[4]:
         st.markdown("## 教室管理")
         existing=get_classrooms()
         st.dataframe(pd.DataFrame(existing),use_container_width=True,hide_index=True)
@@ -622,7 +817,7 @@ def admin_panel():
         if st.button("新增或更新教室"):
             if room_name.strip():
                 save_classroom(room_name.strip(),capacity,location,equipment,status); st.rerun()
-    with tabs[4]:
+    with tabs[5]:
         a,b=st.columns(2)
         with a: sd=st.date_input("開始日期",value=date.today(),key="period_sd")
         with b: ed=st.date_input("結束日期",value=date.today(),key="period_ed")
@@ -635,7 +830,7 @@ def admin_panel():
             else:
                 save_open_period(semester.strip(), str(sd), str(ed))
                 st.success("已儲存")
-    with tabs[5]:
+    with tabs[6]:
         semester=st.text_input("匯入學期",value="115-1",key="course_sem")
         replace=st.checkbox("清除此學期既有課表")
         upload=st.file_uploader("課表 Excel",type=["xlsx"],key="course_file")
@@ -644,7 +839,7 @@ def admin_panel():
             if st.button("匯入課表"): st.success(add_course_blocks(frame,semester,replace)); st.rerun()
         semesters=get_course_semesters()
         if semesters: st.dataframe(pd.DataFrame(semesters),use_container_width=True,hide_index=True)
-    with tabs[6]:
+    with tabs[7]:
         c1,c2,c3,c4=st.columns(4)
         with c1: status_filter=st.selectbox("狀態",["","待審核","已核准","已退回","已取消","已完成"])
         with c2: room_filter=st.selectbox("教室",[""]+[r["room_name"] for r in get_classrooms()])
@@ -703,7 +898,7 @@ def admin_panel():
                         "若持續發生，請查看 Streamlit Logs。"
                     )
         else: st.info("查無借用紀錄")
-    with tabs[7]:
+    with tabs[8]:
         title=st.text_input("公告標題")
         content=st.text_area("公告內容")
         a,b=st.columns(2)
@@ -761,7 +956,7 @@ def admin_panel():
                         st.warning("找不到指定公告，可能已被刪除。")
         else:
             st.info("目前尚無公告紀錄。")
-    with tabs[8]:
+    with tabs[9]:
         day=st.date_input("停借日期",value=date.today(),key="closure_day")
         room=st.selectbox("適用教室",["全部教室"]+[r["room_name"] for r in get_classrooms()])
         reason=st.text_input("停借原因")
@@ -777,13 +972,13 @@ def admin_panel():
                 st.rerun()
         items=get_closures()
         if items: st.dataframe(pd.DataFrame(items),use_container_width=True,hide_index=True)
-    with tabs[9]:
+    with tabs[10]:
         approval=st.radio("借用審核模式",["manual","auto"],index=0 if get_setting("approval_mode","manual")=="manual" else 1,horizontal=True,format_func=lambda x:"人工審核" if x=="manual" else "自動核准")
         max_days=st.number_input("最多可預約未來天數",min_value=1,max_value=365,value=int(get_setting("max_days_ahead","180")))
         if st.button("儲存系統設定"):
             set_setting("approval_mode",approval); set_setting("max_days_ahead",str(max_days)); st.success("已儲存")
         st.caption("Email 通知需在 Streamlit Secrets 設定 [smtp]。")
-    with tabs[10]:
+    with tabs[11]:
         logs=get_audit_logs()
         if logs:
             st.dataframe(pd.DataFrame(logs),use_container_width=True,hide_index=True)
@@ -795,7 +990,7 @@ def admin_panel():
             )
 
 
-st.set_page_config(page_title="AU-PCRS V5.0.5",layout="wide")
+st.set_page_config(page_title="AU-PCRS V6.0",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default
@@ -826,6 +1021,7 @@ page=st.sidebar.radio("Menu / 選單",
         t["reserve"],
         t["calendar"],
         t["weekly"],
+        t["ai_assistant"],
     ]
 )
 
@@ -834,5 +1030,6 @@ elif page==t["my_bookings"]: my_bookings(t)
 elif page==t["reserve"]: reserve(t)
 elif page==t["calendar"]: calendar_view(t)
 elif page==t["weekly"]: weekly_schedule_view(t, "user_weekly")
+elif page==t["ai_assistant"]: ai_assistant_page(t)
 else: admin_panel()
 footer()

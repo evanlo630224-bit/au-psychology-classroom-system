@@ -338,7 +338,7 @@ def header(t):
     with left:
         if PSY_LOGO.exists(): st.image(str(PSY_LOGO), width=210)
     with center:
-        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V7.0.3 Import Compatibility</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero"><div class="h1">{t["title1"]}</div><div class="h2">{t["title2"]}</div><div class="sub">{t["subtitle"]}</div><div class="pill">AU-PCRS V7.0.4 AI Pro NameError Hotfix</div></div>', unsafe_allow_html=True)
     with right:
         if AU_LOGO.exists(): st.image(str(AU_LOGO), width=170)
 
@@ -768,6 +768,370 @@ def availability_assistant(t, key_prefix):
         use_container_width=True,
         hide_index=True,
     )
+
+
+
+def demand_forecast_panel(key_prefix):
+    st.markdown("## AI 借用預測 / Demand Forecast")
+    days = st.selectbox(
+        "預測未來天數",
+        [3, 7, 14, 21, 30],
+        index=1,
+        key=f"{key_prefix}_days",
+    )
+    forecast = forecast_room_demand(days, 90)
+    frame = pd.DataFrame(forecast)
+
+    if frame.empty:
+        st.info("目前沒有足夠資料進行預測。")
+        return
+
+    high_risk = frame[frame["risk"] == "高"]
+    if not high_risk.empty:
+        st.warning(
+            f"預測有 {len(high_risk)} 個高需求教室時段。"
+        )
+
+    st.dataframe(
+        frame,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def approval_assistant_panel(key_prefix):
+    st.markdown("## AI 審核助手 / Approval Assistant")
+    pending = get_all_bookings({"status": "待審核"})
+
+    if not pending:
+        st.success("目前沒有待審核案件。")
+        return
+
+    booking_id = st.selectbox(
+        "選擇待審核借用",
+        [row["booking_id"] for row in pending],
+        key=f"{key_prefix}_booking",
+    )
+    result = get_approval_recommendation(booking_id)
+
+    if not result:
+        st.error("找不到借用紀錄。")
+        return
+
+    col1, col2 = st.columns(2)
+    col1.metric("規則檢核分數", f'{result["score"]:.1f}%')
+    col2.metric("AI 建議", result["recommendation"])
+
+    labels = {
+        "申請人名冊": "identity_valid",
+        "開放期間": "in_open_period",
+        "時段衝突": "no_conflict",
+        "停借檢查": "not_closed",
+        "聯絡資料": "contact_complete",
+        "借用事由": "reason_complete",
+    }
+
+    check_rows = [
+        {
+            "檢核項目": label,
+            "結果": (
+                "通過"
+                if result["checks"][key]
+                else "未通過"
+            ),
+        }
+        for label, key in labels.items()
+    ]
+
+    st.dataframe(
+        pd.DataFrame(check_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    for reason in result["reasons"]:
+        st.warning(reason)
+
+    if not result["reasons"]:
+        st.success("全部規則檢核通過，建議核准。")
+
+
+def utilization_heatmap_panel(key_prefix):
+    st.markdown(
+        "## AI 熱點與使用率 / Heatmap & Utilization"
+    )
+    days = st.selectbox(
+        "統計期間",
+        [30, 90, 180, 365],
+        index=1,
+        key=f"{key_prefix}_days",
+    )
+
+    utilization = get_room_utilization(days)
+    if utilization:
+        st.markdown("### 教室使用率")
+        utilization_frame = (
+            pd.DataFrame(utilization)
+            .set_index("room")[["utilization"]]
+        )
+        st.bar_chart(utilization_frame)
+    else:
+        st.info("目前沒有教室使用率資料。")
+
+    heatmap = get_usage_heatmap(days)
+    if heatmap:
+        st.markdown("### 星期 × 時段熱點")
+        pivot = (
+            pd.DataFrame(heatmap)
+            .pivot(
+                index="weekday",
+                columns="hour",
+                values="count",
+            )
+        )
+        st.dataframe(
+            pivot,
+            use_container_width=True,
+        )
+
+
+def ai_chat_panel(key_prefix):
+    st.markdown("## AI 對話查詢 / AI Query")
+    question = st.text_input(
+        "輸入問題",
+        placeholder=(
+            "例如：最近30天誰借最多？"
+            "哪些教室下午最空？"
+        ),
+        key=f"{key_prefix}_question",
+    ).strip()
+
+    if not question:
+        return
+
+    stats = get_booking_statistics(30)
+    utilization = get_room_utilization(90)
+    booking_rows = get_all_bookings(
+        {
+            "date_from": str(
+                date.today() - timedelta(days=30)
+            ),
+            "date_to": str(date.today()),
+        }
+    )
+
+    if "借最多" in question:
+        counts = {}
+        for row in booking_rows:
+            name = row["applicant_name"]
+            counts[name] = counts.get(name, 0) + 1
+
+        if counts:
+            top_name = max(counts, key=counts.get)
+            answer = (
+                f"最近30天借用最多的是 {top_name}，"
+                f"共 {counts[top_name]} 次。"
+            )
+        else:
+            answer = "最近30天沒有借用紀錄。"
+
+    elif "最空" in question:
+        emptiest = sorted(
+            utilization,
+            key=lambda row: row["utilization"],
+        )[:3]
+
+        if emptiest:
+            answer = "目前使用率最低的教室為：" + "、".join(
+                f'{row["room"]}（{row["utilization"]}%）'
+                for row in emptiest
+            )
+        else:
+            answer = "目前沒有足夠資料判斷。"
+
+    elif "待審核" in question:
+        answer = (
+            f'目前共有 {stats["pending"]} 筆待審核案件。'
+        )
+
+    elif "熱門教室" in question or "最熱門" in question:
+        if stats["by_room"]:
+            top = stats["by_room"][0]
+            answer = (
+                f'最近30天最熱門教室為 {top["room"]}，'
+                f'共 {top["count"]} 筆借用。'
+            )
+        else:
+            answer = "最近30天沒有借用紀錄。"
+
+    elif "可借" in question or "空教室" in question:
+        available = find_available_rooms(
+            date.today(),
+            "13:10",
+            "15:00",
+        )
+        if available:
+            answer = (
+                "今天13:10至15:00可借用教室："
+                + "、".join(
+                    row["room_name"]
+                    for row in available
+                )
+            )
+        else:
+            answer = (
+                "今天13:10至15:00沒有可借用教室。"
+            )
+
+    else:
+        results = search_system_records(
+            question,
+            limit=10,
+        )
+        if results:
+            answer = f"找到 {len(results)} 筆相關資料。"
+            st.dataframe(
+                pd.DataFrame(results),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            answer = (
+                "目前支援：誰借最多、熱門教室、"
+                "待審核、下午最空、今天可借教室，"
+                "以及一般關鍵字搜尋。"
+            )
+
+    st.markdown(
+        (
+            '<div class="ai-insight">'
+            f'<b>AI：</b>{answer}'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def tv_mode_page():
+    data = get_tv_dashboard_data()
+
+    st.markdown(
+        (
+            '<div class="tv-board">'
+            f'<div class="tv-title">'
+            f'AU-PCRS 智慧教室營運看板｜'
+            f'{data["date"]}'
+            '</div>'
+            '<div class="tv-grid">'
+        ),
+        unsafe_allow_html=True,
+    )
+
+    for room in data["room_statuses"]:
+        st.markdown(
+            (
+                '<div class="tv-card">'
+                f'<h3>{room["room_name"]}</h3>'
+                f'<div>{room["status"]}</div>'
+                f'<div>{room.get("detail") or ""}</div>'
+                '</div>'
+            ),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    left, right = st.columns(2)
+
+    with left:
+        st.markdown("### 今日借用")
+        if data["upcoming"]:
+            st.dataframe(
+                pd.DataFrame(data["upcoming"])[
+                    [
+                        "booking_id",
+                        "room",
+                        "start_time",
+                        "end_time",
+                        "applicant_name",
+                        "status",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("今日沒有借用紀錄。")
+
+    with right:
+        st.markdown("### 最新公告")
+        if data["announcements"]:
+            for item in data["announcements"]:
+                title = item.get("title") or ""
+                content = item.get("content") or ""
+                title_en = item.get("title_en") or ""
+                content_en = item.get("content_en") or ""
+
+                st.markdown(
+                    (
+                        '<div class="announcement">'
+                        f'<b>{title}</b><br>{content}'
+                        '<hr style="border:none;'
+                        'border-top:1px solid #d9d2ff;">'
+                        f'<b>{title_en}</b><br>{content_en}'
+                        '</div>'
+                    ),
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("目前沒有公告。")
+
+
+def ai_pro_center(t, key_prefix):
+    tabs = st.tabs(
+        [
+            "AI 智慧分析",
+            "AI 借用預測",
+            "AI 審核助手",
+            "熱點與使用率",
+            "AI 對話查詢",
+            "智慧搜尋",
+            "空間推薦",
+        ]
+    )
+
+    with tabs[0]:
+        ai_insight_panel(f"{key_prefix}_insight")
+
+    with tabs[1]:
+        demand_forecast_panel(
+            f"{key_prefix}_forecast"
+        )
+
+    with tabs[2]:
+        approval_assistant_panel(
+            f"{key_prefix}_approval"
+        )
+
+    with tabs[3]:
+        utilization_heatmap_panel(
+            f"{key_prefix}_heatmap"
+        )
+
+    with tabs[4]:
+        ai_chat_panel(f"{key_prefix}_chat")
+
+    with tabs[5]:
+        smart_search_panel(f"{key_prefix}_search")
+
+    with tabs[6]:
+        availability_assistant(
+            t,
+            f"{key_prefix}_availability",
+        )
 
 
 def ai_assistant_page(t):
@@ -1276,7 +1640,7 @@ def admin_panel():
             )
 
 
-st.set_page_config(page_title="AU-PCRS V7.0.3",layout="wide")
+st.set_page_config(page_title="AU-PCRS V7.0.4",layout="wide")
 apply_style()
 for key,default in {"language":"中文","user":None,"admin":False}.items():
     if key not in st.session_state: st.session_state[key]=default

@@ -279,7 +279,7 @@ def login_page():
         + quick("notice", "系統公告", "重要通知與公告")
         + quick("book", "使用說明", "操作手冊與指南")
         + quick("news", "最新消息", "系統更新資訊")
-        + '</div><div class="footer-note">AU-PCRS V8.4 Sidebar Visibility Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
+        + '</div><div class="footer-note">AU-PCRS V8.5 Database Migration Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
         unsafe_allow_html=True,
     )
 
@@ -430,7 +430,7 @@ def admin_page():
             st.info("目前尚無操作紀錄")
 
 
-st.set_page_config(page_title="AU-PCRS V8.4", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V8.5", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -480,8 +480,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("AU-PCRS V8.4")
-    st.caption("Sidebar Visibility Fix Edition")
+    st.caption("AU-PCRS V8.5")
+    st.caption("Database Migration Fix Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

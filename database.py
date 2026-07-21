@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 import pandas as pd
-from sqlalchemy import Boolean, Column, Date, DateTime, Integer, MetaData, String, Table, Text, Time, UniqueConstraint, and_, create_engine, delete, func, insert, select, text, update
+from sqlalchemy import Boolean, Column, Date, DateTime, Integer, MetaData, String, Table, Text, Time, UniqueConstraint, and_, create_engine, delete, func, insert, inspect, select, text, update
 from sqlalchemy.engine import Engine, URL
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
@@ -69,7 +69,64 @@ audit_logs = Table("audit_logs", metadata,
 def _date(v): return v if isinstance(v, date) else date.fromisoformat(str(v))
 def _time(v): return v if isinstance(v, time) else time.fromisoformat(str(v)[:5])
 def _rows(r): return [dict(x._mapping) for x in r]
-def init_db(): metadata.create_all(engine)
+def _column_names(table_name):
+    try:
+        return {col["name"] for col in inspect(engine).get_columns(table_name)}
+    except Exception:
+        return set()
+
+
+def _add_column_if_missing(table_name, column_name, ddl):
+    columns = _column_names(table_name)
+    if column_name in columns:
+        return False
+    with engine.begin() as conn:
+        conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN {ddl}'))
+    return True
+
+
+def migrate_schema():
+    """Upgrade older SQLite/Supabase schemas without deleting existing data."""
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "course_blocks" in tables:
+        _add_column_if_missing("course_blocks", "semester", 'semester VARCHAR(30)')
+        _add_column_if_missing("course_blocks", "is_active", 'is_active BOOLEAN')
+        _add_column_if_missing("course_blocks", "created_at", 'created_at TIMESTAMP')
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE course_blocks SET semester = '歷史課表' WHERE semester IS NULL OR TRIM(semester) = ''"))
+            conn.execute(text("UPDATE course_blocks SET is_active = TRUE WHERE is_active IS NULL"))
+            conn.execute(text("UPDATE course_blocks SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+
+    if "open_periods" in tables:
+        _add_column_if_missing("open_periods", "semester", 'semester VARCHAR(30)')
+        _add_column_if_missing("open_periods", "is_active", 'is_active BOOLEAN')
+        _add_column_if_missing("open_periods", "created_at", 'created_at TIMESTAMP')
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE open_periods SET semester = '未設定' WHERE semester IS NULL OR TRIM(semester) = ''"))
+            conn.execute(text("UPDATE open_periods SET is_active = TRUE WHERE is_active IS NULL"))
+            conn.execute(text("UPDATE open_periods SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+
+    if "authorized_users" in tables:
+        _add_column_if_missing("authorized_users", "email", 'email VARCHAR(255)')
+        _add_column_if_missing("authorized_users", "status", 'status VARCHAR(20)')
+        _add_column_if_missing("authorized_users", "imported_at", 'imported_at TIMESTAMP')
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE authorized_users SET status = '啟用' WHERE status IS NULL OR TRIM(status) = ''"))
+            conn.execute(text("UPDATE authorized_users SET imported_at = CURRENT_TIMESTAMP WHERE imported_at IS NULL"))
+
+    if "bookings" in tables:
+        for name, ddl in [
+            ("updated_at", 'updated_at TIMESTAMP'),
+            ("cancel_reason", 'cancel_reason TEXT'),
+            ("cancelled_at", 'cancelled_at TIMESTAMP'),
+        ]:
+            _add_column_if_missing("bookings", name, ddl)
+
+
+def init_db():
+    metadata.create_all(engine)
+    migrate_schema()
 def database_health_check():
     try:
         with engine.connect() as c: c.execute(text("SELECT 1"))
@@ -120,7 +177,22 @@ def add_course_blocks(df,semester,replace=False):
         except IntegrityError: dup+=1
     return {"inserted":ins,"duplicates":dup,"skipped":skip}
 def get_course_semesters():
-    with engine.connect() as c:return _rows(c.execute(select(course_blocks.c.semester,func.count().label("course_count"),func.max(course_blocks.c.is_active).label("is_active")).group_by(course_blocks.c.semester).order_by(course_blocks.c.semester.desc())))
+    stmt = (
+        select(
+            course_blocks.c.semester,
+            func.count().label("course_count"),
+            func.max(course_blocks.c.is_active).label("is_active"),
+        )
+        .group_by(course_blocks.c.semester)
+        .order_by(course_blocks.c.semester.desc())
+    )
+    try:
+        with engine.connect() as conn:
+            return _rows(conn.execute(stmt))
+    except Exception:
+        migrate_schema()
+        with engine.connect() as conn:
+            return _rows(conn.execute(stmt))
 def set_course_semester_active(semester,active):
     with engine.begin() as c:c.execute(update(course_blocks).where(course_blocks.c.semester==semester).values(is_active=bool(active)))
 def delete_course_semester(semester):

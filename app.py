@@ -2,7 +2,7 @@ import base64
 import io
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -241,6 +241,29 @@ def style(login_mode=False):
     .quick-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}}
     .quick{{position:relative;display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--b);border-radius:16px;padding:13px 15px;box-shadow:0 7px 20px rgba(67,34,160,.05)}}
     .quick b{{font-size:.92rem;color:#302c3e}}.quick .arrow{{position:absolute;right:14px;color:#77718b;font-size:1.45rem}}
+    .portal-label{{font-size:.72rem;color:#7a748a;margin-top:-4px;margin-bottom:5px;text-align:center}}
+    div[data-testid="stButton"]>button[kind="secondary"]{{
+        min-height:70px!important;
+        background:#fff!important;
+        border:1px solid var(--b)!important;
+        color:#332d43!important;
+        box-shadow:0 8px 22px rgba(67,34,160,.065)!important;
+        text-align:left!important;
+        justify-content:flex-start!important;
+        padding:12px 16px!important;
+        font-size:.93rem!important;
+    }}
+    div[data-testid="stButton"]>button[kind="secondary"]:hover{{
+        border-color:#ad96f2!important;
+        background:linear-gradient(100deg,#faf8ff,#f2edff)!important;
+        color:#4d24bf!important;
+        transform:translateY(-1px);
+    }}
+    .public-shell{{border:1px solid var(--b);border-radius:22px;background:rgba(255,255,255,.97);box-shadow:0 18px 44px rgba(55,25,145,.10);padding:22px 24px;margin-top:4px}}
+    .public-title{{font-size:1.8rem;font-weight:900;color:var(--p);margin-bottom:5px}}
+    .public-sub{{color:var(--m);margin-bottom:16px}}
+    .notice-card{{border:1px solid var(--b);border-radius:16px;padding:15px 17px;background:#fff;margin:9px 0;box-shadow:0 6px 18px rgba(67,34,160,.045)}}
+    .notice-card b{{color:#3c1aa5}}.notice-card p{{margin:6px 0 0;color:#666174;line-height:1.65}}
     .footer-note{{text-align:center;color:#827e92;font-size:.72rem;margin-top:14px}}
     @media(max-width:900px){{.features,.quick-grid{{grid-template-columns:1fr}}.logo-wrap{{height:auto}}.block-container{{padding-left:1rem!important;padding-right:1rem!important}}}}
     {login_css}
@@ -262,8 +285,184 @@ def topbar(language_selector=False):
     st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
 
 
+def _set_public_page(page_name, message=""):
+    st.session_state.public_page = page_name
+    st.session_state.portal_message = message
+    st.rerun()
+
+
+def _availability_rows(query_date, query_room):
+    courses = get_course_blocks(str(query_date), query_room)
+    bookings = [
+        item for item in get_all_bookings()
+        if str(item["booking_date"]) == str(query_date)
+        and item["room"] == query_room
+        and item["status"] == "有效"
+    ]
+    output = []
+    for start_time, end_time in SLOTS:
+        status, detail = "可借用", ""
+        for course in courses:
+            if start_time < str(course["end_time"])[:5] and end_time > str(course["start_time"])[:5]:
+                status = "已排課"
+                detail = course.get("course_name", "")
+                if course.get("teacher"):
+                    detail += f"｜{course['teacher']}"
+                break
+        if status == "可借用":
+            for booking in bookings:
+                if start_time < str(booking["end_time"])[:5] and end_time > str(booking["start_time"])[:5]:
+                    status, detail = "已借用", booking.get("reason", "")
+                    break
+        output.append({
+            "時間 Time": f"{start_time}–{end_time}",
+            "狀態 Status": status,
+            "說明 Detail": detail,
+        })
+    return output
+
+
+def render_public_schedule():
+    topbar(language_selector=True)
+    st.markdown(
+        '<div class="public-shell"><div class="public-title">教室課表與使用查詢</div>'
+        '<div class="public-sub">Classroom Schedule & Availability</div></div>',
+        unsafe_allow_html=True,
+    )
+    left, right = st.columns(2)
+    with left:
+        query_date = st.date_input("查詢日期 / Date", value=date.today(), key="public_schedule_date")
+    with right:
+        query_room = st.selectbox("教室 / Classroom", ROOMS, key="public_schedule_room")
+
+    rows = _availability_rows(query_date, query_room)
+    frame = pd.DataFrame(rows)
+    st.dataframe(frame, use_container_width=True, hide_index=True)
+
+    available_count = int((frame["狀態 Status"] == "可借用").sum())
+    course_count = int((frame["狀態 Status"] == "已排課").sum())
+    booking_count = int((frame["狀態 Status"] == "已借用").sum())
+    a, b, c = st.columns(3)
+    a.metric("可借用 Available", available_count)
+    b.metric("已排課 Courses", course_count)
+    c.metric("已借用 Reserved", booking_count)
+
+    if st.button("← 返回系統登入", use_container_width=True, key="back_schedule"):
+        _set_public_page("login")
+
+
+def render_public_announcements():
+    topbar(language_selector=True)
+    st.markdown(
+        '<div class="public-shell"><div class="public-title">系統公告</div>'
+        '<div class="public-sub">System Announcements</div></div>',
+        unsafe_allow_html=True,
+    )
+    period = get_active_open_period()
+    if period:
+        st.success(
+            f"目前開放學期：{period['semester']}｜"
+            f"借用期間：{period['start_date']} ～ {period['end_date']}"
+        )
+    else:
+        st.warning("目前尚未設定教室借用開放期間，請留意系辦公告。")
+
+    st.markdown(
+        """
+        <div class="notice-card"><b>借用資格</b>
+        <p>本系統僅供亞洲大學心理學系教師及在學學生使用，登入時須通過名冊驗證。</p></div>
+        <div class="notice-card"><b>課程時段優先</b>
+        <p>正式課表已占用的時段不開放借用；送出申請前，系統會再次進行課程與借用衝突檢查。</p></div>
+        <div class="notice-card"><b>資料正確性</b>
+        <p>請填寫有效聯絡手機、Email與具體借用事由，以利系辦聯絡及行政管理。</p></div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("← 返回系統登入", use_container_width=True, key="back_notice"):
+        _set_public_page("login")
+
+
+def render_public_guide():
+    topbar(language_selector=True)
+    st.markdown(
+        '<div class="public-shell"><div class="public-title">使用說明</div>'
+        '<div class="public-sub">User Guide</div></div>',
+        unsafe_allow_html=True,
+    )
+    tab1, tab2, tab3 = st.tabs(["教師／學生", "管理員", "常見問題"])
+    with tab1:
+        st.markdown(
+            """
+            ### 教室借用步驟
+            1. 選擇「教師」或「學生」身分，輸入教師職編或學生學號。
+            2. 進入「我要借教室」，選擇日期、教室及起訖時間。
+            3. 填寫聯絡手機、Email與借用事由。
+            4. 系統自動檢查正式課程及既有借用紀錄。
+            5. 申請成功後請保存系統產生的借用編號。
+
+            ### 查詢教室
+            登入前可使用「教室課表」公開查詢；登入後也可由「教室查詢」查看可借用時段。
+            """
+        )
+    with tab2:
+        st.markdown(
+            """
+            ### 管理端主要功能
+            - 匯入教師與學生授權名冊。
+            - 設定每學期教室借用開放期間。
+            - 匯入正式課表並管理學期資料。
+            - 查看、匯出及取消借用紀錄。
+            - 查閱操作稽核紀錄與資料庫連線狀態。
+            """
+        )
+    with tab3:
+        st.markdown(
+            """
+            **無法登入怎麼辦？**  
+            請先確認身分選擇是否正確、職編或學號是否已匯入本學期授權名冊。
+
+            **為何某時段不能借用？**  
+            該時段可能已有正式課程、既有借用，或不在本學期開放期間內。
+
+            **忘記管理員密碼？**  
+            請聯絡心理學系系辦，由系統管理者於 Streamlit Secrets 更新密碼。
+            """
+        )
+    if st.button("← 返回系統登入", use_container_width=True, key="back_guide"):
+        _set_public_page("login")
+
+
+def render_public_news():
+    topbar(language_selector=True)
+    st.markdown(
+        '<div class="public-shell"><div class="public-title">最新消息</div>'
+        '<div class="public-sub">System Updates</div></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="notice-card"><b>V8.8 Functional Portal Edition</b>
+        <p>首頁七個入口正式加入導覽功能；新增免登入教室課表、系統公告、使用說明及版本更新頁面。</p></div>
+        <div class="notice-card"><b>V8.7 Excel Timezone Export Fix</b>
+        <p>修正 PostgreSQL 含時區日期時間無法匯出 Excel 的問題。</p></div>
+        <div class="notice-card"><b>V8.6 PostgreSQL Boolean Aggregate Fix</b>
+        <p>修正 PostgreSQL 不支援 MAX(boolean) 所造成的課表管理錯誤。</p></div>
+        <div class="notice-card"><b>V8.5 Database Migration Fix</b>
+        <p>加入舊版 Supabase 資料表欄位自動遷移與相容處理。</p></div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("← 返回系統登入", use_container_width=True, key="back_news"):
+        _set_public_page("login")
+
+
 def login_page():
     topbar(language_selector=True)
+
+    portal_message = st.session_state.pop("portal_message", "")
+    if portal_message:
+        st.info(portal_message)
+
     left, right = st.columns([1.2, .86], gap="large", vertical_alignment="top")
     with left:
         logo_uri = image_data_uri(PSY_LOGO)
@@ -271,19 +470,47 @@ def login_page():
             logo_html = f'<div class="logo-wrap"><img class="brand-logo" src="{logo_uri}" alt="Department of Psychology logo"></div>'
         else:
             logo_html = '<div class="logo-wrap"><div class="logo-fallback">Ψ</div></div>'
+
         st.markdown(
-            logo_html + '''<div class="hero"><div class="eyebrow">AU-PCRS · PROFESSIONAL ADMINISTRATIVE PORTAL</div><div class="t1">亞洲大學心理學系</div><div class="t2">專業教室借用及查詢系統</div><div class="sub">AU Psychology Classroom Reservation System</div><div class="desc">提供教師、學生與管理者進行教室借用、查詢與行政管理之整合平台。</div><div class="features">'''
-            + feature("calendar", "教室借用", "線上申請與衝堂檢核")
-            + feature("search", "借用查詢", "即時查看教室使用狀態")
-            + feature("settings", "行政管理", "名冊、課表與借用管理")
-            + '</div></div>',
+            logo_html
+            + '<div class="hero"><div class="eyebrow">AU-PCRS · PROFESSIONAL ADMINISTRATIVE PORTAL</div>'
+            + '<div class="t1">亞洲大學心理學系</div>'
+            + '<div class="t2">專業教室借用及查詢系統</div>'
+            + '<div class="sub">AU Psychology Classroom Reservation System</div>'
+            + '<div class="desc">提供教師、學生與管理者進行教室借用、查詢與行政管理之整合平台。</div></div>',
             unsafe_allow_html=True,
         )
+
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            if st.button("▣  教室借用\n\n線上申請與衝堂檢核", use_container_width=True, key="feature_reserve"):
+                _set_public_page("login", "請先選擇教師或學生身分登入，再進行教室借用。")
+        with f2:
+            if st.button("⌕  借用查詢\n\n即時查看教室使用狀態", use_container_width=True, key="feature_query"):
+                _set_public_page("schedule")
+        with f3:
+            if st.button("⚙  行政管理\n\n名冊、課表與借用管理", use_container_width=True, key="feature_admin"):
+                st.session_state.preferred_role = "管理員"
+                _set_public_page("login", "請選擇管理員身分並輸入管理員密碼。")
+
     with right:
         with st.container(border=True):
-            st.markdown('<div class="login-title">系統登入 / System Login</div><div class="login-caption">請選擇身分並輸入登入資料</div><div class="rule"></div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="login-title">系統登入 / System Login</div>'
+                '<div class="login-caption">請選擇身分並輸入登入資料</div><div class="rule"></div>',
+                unsafe_allow_html=True,
+            )
+            role_options = ["教師", "學生", "管理員"]
+            preferred = st.session_state.pop("preferred_role", "教師")
+            default_index = role_options.index(preferred) if preferred in role_options else 0
+
             with st.form("login", clear_on_submit=False):
-                role = st.radio("身分 / Role", ["教師", "學生", "管理員"], horizontal=True)
+                role = st.radio(
+                    "身分 / Role",
+                    role_options,
+                    horizontal=True,
+                    index=default_index,
+                )
                 is_admin = role == "管理員"
                 cred = st.text_input(
                     "管理員密碼" if is_admin else "教師職編／學生學號",
@@ -292,13 +519,32 @@ def login_page():
                 )
                 st.checkbox("記住我的帳號 / Remember me")
                 submitted = st.form_submit_button("登入 Login", use_container_width=True)
-            st.markdown('<div class="login-links"><span>🔒 忘記密碼？</span><span>☎ 聯絡系辦</span></div>', unsafe_allow_html=True)
+
+            l1, l2 = st.columns(2)
+            with l1:
+                st.link_button(
+                    "🔒 忘記密碼？",
+                    "mailto:psy@asia.edu.tw?subject=AU-PCRS登入協助",
+                    use_container_width=True,
+                )
+            with l2:
+                st.link_button(
+                    "☎ 聯絡系辦",
+                    "mailto:psy@asia.edu.tw?subject=AU-PCRS系統問題",
+                    use_container_width=True,
+                )
+
             if submitted:
                 if not cred.strip():
                     st.error("請輸入登入資料。")
                 elif is_admin:
                     if cred == admin_password():
-                        st.session_state.user = {"user_type": "管理員", "name": "Administrator", "identification_code": "ADMIN", "email": ""}
+                        st.session_state.user = {
+                            "user_type": "管理員",
+                            "name": "Administrator",
+                            "identification_code": "ADMIN",
+                            "email": "",
+                        }
                         st.session_state.admin = True
                         st.rerun()
                     else:
@@ -311,17 +557,30 @@ def login_page():
                         st.rerun()
                     else:
                         st.error("身分驗證失敗，僅限心理學系教師及學生使用。")
-            st.markdown('<div class="privacy">本系統僅供亞洲大學心理學系教師與學生使用。</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="privacy">本系統僅供亞洲大學心理學系教師與學生使用。</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown('<div class="portal-label">公開資訊與快速入口 / Public Information</div>', unsafe_allow_html=True)
+    q1, q2, q3, q4 = st.columns(4)
+    with q1:
+        if st.button("▦  教室課表\n\n查看課表與使用狀況", use_container_width=True, key="quick_schedule"):
+            _set_public_page("schedule")
+    with q2:
+        if st.button("◉  系統公告\n\n重要通知與公告", use_container_width=True, key="quick_notice"):
+            _set_public_page("announcements")
+    with q3:
+        if st.button("▤  使用說明\n\n操作手冊與指南", use_container_width=True, key="quick_guide"):
+            _set_public_page("guide")
+    with q4:
+        if st.button("▥  最新消息\n\n系統更新資訊", use_container_width=True, key="quick_news"):
+            _set_public_page("news")
+
     st.markdown(
-        '<div class="quick-grid">'
-        + quick("calendar", "教室課表", "查看課表與使用狀況")
-        + quick("notice", "系統公告", "重要通知與公告")
-        + quick("book", "使用說明", "操作手冊與指南")
-        + quick("news", "最新消息", "系統更新資訊")
-        + '</div><div class="footer-note">AU-PCRS V8.7 Excel Timezone Export Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
+        '<div class="footer-note">AU-PCRS V8.8 Functional Portal Edition ｜ © 2026 亞洲大學心理學系</div>',
         unsafe_allow_html=True,
     )
-
 
 def render_dashboard() -> None:
     """Render the dashboard directly. Do not wrap this call in st.write()."""
@@ -386,22 +645,11 @@ def query():
         query_date = st.date_input("日期", value=date.today(), key="qd")
     with right:
         query_room = st.selectbox("教室", ROOMS, key="qr")
-    courses = get_course_blocks(str(query_date), query_room)
-    bookings = [x for x in get_all_bookings() if str(x["booking_date"]) == str(query_date) and x["room"] == query_room and x["status"] == "有效"]
-    output = []
-    for start, end in SLOTS:
-        status, detail = "可借用", ""
-        for course in courses:
-            if start < str(course["end_time"])[:5] and end > str(course["start_time"])[:5]:
-                status, detail = "已排課", course["course_name"]
-                break
-        if status == "可借用":
-            for booking in bookings:
-                if start < str(booking["end_time"])[:5] and end > str(booking["start_time"])[:5]:
-                    status, detail = "已借用", booking["reason"]
-                    break
-        output.append({"時間": f"{start}–{end}", "狀態": status, "說明": detail})
-    st.dataframe(pd.DataFrame(output), use_container_width=True, hide_index=True)
+    st.dataframe(
+        pd.DataFrame(_availability_rows(query_date, query_room)),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 def admin_page():
@@ -469,8 +717,8 @@ def admin_page():
             st.info("目前尚無操作紀錄")
 
 
-st.set_page_config(page_title="AU-PCRS V8.5", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
-for key, value in {"language": "中文", "user": None, "admin": False}.items():
+st.set_page_config(page_title="AU-PCRS V8.8", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
@@ -484,7 +732,17 @@ except Exception as exc:
 
 if st.session_state.user is None:
     style(login_mode=True)
-    _ = login_page()
+    public_page = st.session_state.get("public_page", "login")
+    if public_page == "schedule":
+        render_public_schedule()
+    elif public_page == "announcements":
+        render_public_announcements()
+    elif public_page == "guide":
+        render_public_guide()
+    elif public_page == "news":
+        render_public_news()
+    else:
+        login_page()
     st.stop()
 
 style(login_mode=False)
@@ -519,8 +777,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("AU-PCRS V8.5")
-    st.caption("Database Migration Fix Edition")
+    st.caption("AU-PCRS V8.8")
+    st.caption("Functional Portal Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

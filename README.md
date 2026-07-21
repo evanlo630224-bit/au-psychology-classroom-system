@@ -1,20 +1,21 @@
-# AU-PCRS V8.0 Professional UI Edition
+# AU-PCRS V8.1 Refined Login Edition
 
-## 本版本重點
-- 依新版首頁 UI 模擬圖重做登入畫面
-- 雙欄式品牌主視覺與專業登入卡片
-- 中文／English 雙語切換
-- 教師、學生、管理員三種身分登入
-- 保留名冊匯入、開放期間、課表匯入、衝堂檢查
-- 保留教室借用、教室查詢、借用修改／取消、稽核紀錄
-- 支援 Supabase PostgreSQL，未設定時自動使用 SQLite
-- 教室：M502、M506、M507、M510、800A
+## 本版本修正
+- 登入前不再顯示大面積紫色側欄。
+- 語言切換移至頂部右側，修正選單文字空白問題。
+- 登入標題、身分選擇、帳號欄位與按鈕整合為同一張卡片。
+- 隱藏 Streamlit Share、GitHub、編輯及工具列控制項。
+- Logo 改為縮小整合呈現，並以混合模式降低白色底框突兀感。
+- 功能卡片全面改用一致的 SVG 線性圖示。
+- 縮減 Hero、卡片及頁尾高度，提升一般桌面解析度的完整呈現率。
+- 保留 V8.0 既有的登入、名冊、課表、衝堂、借用、查詢、後台與稽核功能。
 
-## Logo 檔名
+## Logo
+請將正式 Logo 放入：
 - `assets/psychology_logo.jpg`
 - `assets/asia_university_logo.png`
 
-Logo 未放入時，系統仍可啟動，只是不顯示圖片。
+如能提供透明背景 PNG，首頁效果會更佳；也可將 `PSY_LOGO` 的檔名改成透明 PNG。
 
 ## 本機執行
 ```bash
@@ -22,10 +23,5 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Streamlit Cloud 更新
-1. 將整個資料夾內容上傳至 GitHub repository。
-2. 保留原本 Streamlit Cloud 的 Supabase Secrets。
-3. Main file path 設為 `app.py`。
-4. Deploy／Reboot app。
-
-升級前請先備份 Supabase。
+## 部署
+將本資料夾內容上傳至原 GitHub Repository，保留 Streamlit Cloud 原有 Supabase Secrets，重新部署即可。

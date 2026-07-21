@@ -366,7 +366,9 @@ def render_public_schedule():
     a.metric(p["available"], int((frame[status_col] == p["available"]).sum()))
     b.metric(p["course"], int((frame[status_col] == p["course"]).sum()))
     c.metric(p["reserved"], int((frame[status_col] == p["reserved"]).sum()))
-    if st.button(p["back"], use_container_width=True, key="back_schedule"): _set_public_page("login")
+    if st.button(p["back"], use_container_width=True, key="back_schedule"):
+        _set_public_page("login")
+    return None
 
 
 def render_public_announcements():
@@ -375,13 +377,30 @@ def render_public_announcements():
     st.markdown(f'<div class="public-shell"><div class="public-title">{p["notice_page"]}</div><div class="public-sub">{p["notice_page_sub"]}</div></div>', unsafe_allow_html=True)
     period=get_active_open_period()
     if lang == "English":
-        st.success(f'Current semester: {period["semester"]} | Reservation period: {period["start_date"]} – {period["end_date"]}') if period else st.warning("No classroom reservation period has been configured. Please check department announcements.")
+        if period:
+            st.success(
+                f'Current semester: {period["semester"]} | '
+                f'Reservation period: {period["start_date"]} – {period["end_date"]}'
+            )
+        else:
+            st.warning(
+                "No classroom reservation period has been configured. "
+                "Please check department announcements."
+            )
         html='<div class="notice-card"><b>Eligibility</b><p>This system is limited to Department of Psychology faculty and currently enrolled students. Login credentials are verified against the authorized roster.</p></div><div class="notice-card"><b>Scheduled Courses Take Priority</b><p>Classrooms cannot be reserved during scheduled course periods. The system checks both course schedules and existing reservations before submission.</p></div><div class="notice-card"><b>Accurate Contact Information</b><p>Please provide a valid phone number, email address, and clear purpose for administrative follow-up.</p></div>'
     else:
-        st.success(f'目前開放學期：{period["semester"]}｜借用期間：{period["start_date"]} ～ {period["end_date"]}') if period else st.warning("目前尚未設定教室借用開放期間，請留意系辦公告。")
+        if period:
+            st.success(
+                f'目前開放學期：{period["semester"]}｜'
+                f'借用期間：{period["start_date"]} ～ {period["end_date"]}'
+            )
+        else:
+            st.warning("目前尚未設定教室借用開放期間，請留意系辦公告。")
         html='<div class="notice-card"><b>借用資格</b><p>本系統僅供亞洲大學心理學系教師及在學學生使用，登入時須通過名冊驗證。</p></div><div class="notice-card"><b>課程時段優先</b><p>正式課表已占用的時段不開放借用；送出申請前，系統會再次進行課程與借用衝突檢查。</p></div><div class="notice-card"><b>資料正確性</b><p>請填寫有效聯絡手機、Email與具體借用事由，以利系辦聯絡及行政管理。</p></div>'
     st.markdown(html, unsafe_allow_html=True)
-    if st.button(p["back"], use_container_width=True, key="back_notice"): _set_public_page("login")
+    if st.button(p["back"], use_container_width=True, key="back_notice"):
+        _set_public_page("login")
+    return None
 
 
 def render_public_guide():
@@ -451,6 +470,7 @@ Contact psychology@asia.edu.tw.
             """)
     if st.button(p["back"], use_container_width=True, key="back_guide"):
         _set_public_page("login")
+    return None
 
 
 def render_public_news():
@@ -459,14 +479,17 @@ def render_public_news():
     st.markdown(f'<div class="public-shell"><div class="public-title">{p["news_page"]}</div><div class="public-sub">{p["news_page_sub"]}</div></div>', unsafe_allow_html=True)
     html = '<div class="notice-card"><b>V8.9 Full Bilingual Portal Edition</b><p>Complete English localization for homepage actions, login controls, and public pages. Updated the department contact email and removed the forgot-password option.</p></div>' if lang == "English" else '<div class="notice-card"><b>V8.9 Full Bilingual Portal Edition</b><p>首頁功能、登入表單與公開資訊頁面完整支援英文切換；更新系辦聯絡信箱並移除忘記密碼選項。</p></div>'
     st.markdown(html, unsafe_allow_html=True)
-    if st.button(p["back"], use_container_width=True, key="back_news"): _set_public_page("login")
+    if st.button(p["back"], use_container_width=True, key="back_news"):
+        _set_public_page("login")
+    return None
 
 
 def login_page():
     topbar(language_selector=True)
     lang=st.session_state.language; p=PORTAL_TEXT[lang]
     portal_message=st.session_state.pop("portal_message", "")
-    if portal_message: st.info(portal_message)
+    if portal_message:
+        st.info(portal_message)
     left,right=st.columns([1.2,.86], gap="large", vertical_alignment="top")
     with left:
         logo_uri=image_data_uri(PSY_LOGO)
@@ -514,7 +537,9 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V8.9 Full Bilingual Portal Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V9.0 Public Page Magic Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    return None
+
 
 def render_dashboard() -> None:
     """Render the dashboard directly. Do not wrap this call in st.write()."""
@@ -651,7 +676,7 @@ def admin_page():
             st.info("目前尚無操作紀錄")
 
 
-st.set_page_config(page_title="AU-PCRS V8.9", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V9.0", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -668,15 +693,15 @@ if st.session_state.user is None:
     style(login_mode=True)
     public_page = st.session_state.get("public_page", "login")
     if public_page == "schedule":
-        render_public_schedule()
+        _ = render_public_schedule()
     elif public_page == "announcements":
-        render_public_announcements()
+        _ = render_public_announcements()
     elif public_page == "guide":
-        render_public_guide()
+        _ = render_public_guide()
     elif public_page == "news":
-        render_public_news()
+        _ = render_public_news()
     else:
-        login_page()
+        _ = login_page()
     st.stop()
 
 style(login_mode=False)
@@ -711,7 +736,7 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("AU-PCRS V8.9")
+    st.caption("AU-PCRS V9.0")
     st.caption("Full Bilingual Portal Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None

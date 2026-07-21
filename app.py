@@ -64,8 +64,47 @@ def valid_phone(value):
 
 
 def xlsx(rows, sheet="資料"):
+    """
+    Export records safely to Excel.
+
+    PostgreSQL TIMESTAMPTZ values are timezone-aware, while Excel does not
+    support timezone-aware datetimes. Convert datetime columns to timezone-
+    naive local values before calling DataFrame.to_excel().
+    """
     buffer = io.BytesIO()
-    pd.DataFrame(rows).to_excel(buffer, index=False, sheet_name=sheet, engine="openpyxl")
+    frame = pd.DataFrame(rows).copy()
+
+    for column in frame.columns:
+        series = frame[column]
+
+        # Handle pandas datetime dtypes, including datetime64[ns, tz].
+        if pd.api.types.is_datetime64_any_dtype(series):
+            try:
+                if getattr(series.dt, "tz", None) is not None:
+                    frame[column] = series.dt.tz_localize(None)
+            except (AttributeError, TypeError):
+                pass
+            continue
+
+        # Handle object columns containing Python datetime values returned
+        # by SQLAlchemy / psycopg.
+        if series.dtype == "object":
+            def normalize_excel_value(value):
+                if isinstance(value, datetime):
+                    if value.tzinfo is not None and value.utcoffset() is not None:
+                        return value.replace(tzinfo=None)
+                    return value
+                return value
+
+            frame[column] = series.map(normalize_excel_value)
+
+    safe_sheet = re.sub(r"[:\\/?*\[\]]", "_", str(sheet))[:31] or "資料"
+    frame.to_excel(
+        buffer,
+        index=False,
+        sheet_name=safe_sheet,
+        engine="openpyxl",
+    )
     return buffer.getvalue()
 
 
@@ -279,7 +318,7 @@ def login_page():
         + quick("notice", "系統公告", "重要通知與公告")
         + quick("book", "使用說明", "操作手冊與指南")
         + quick("news", "最新消息", "系統更新資訊")
-        + '</div><div class="footer-note">AU-PCRS V8.6 PostgreSQL Boolean Aggregate Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
+        + '</div><div class="footer-note">AU-PCRS V8.7 Excel Timezone Export Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
         unsafe_allow_html=True,
     )
 

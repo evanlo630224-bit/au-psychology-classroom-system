@@ -1,32 +1,31 @@
-# AU-PCRS V7.0.5 Translation Validation Hotfix
+# AU-PCRS V8.0 Professional UI Edition
 
-## 修正內容
+## 本版本重點
+- 依新版首頁 UI 模擬圖重做登入畫面
+- 雙欄式品牌主視覺與專業登入卡片
+- 中文／English 雙語切換
+- 教師、學生、管理員三種身分登入
+- 保留名冊匯入、開放期間、課表匯入、衝堂檢查
+- 保留教室借用、教室查詢、借用修改／取消、稽核紀錄
+- 支援 Supabase PostgreSQL，未設定時自動使用 SQLite
+- 教室：M502、M506、M507、M510、800A
 
-修正自動英文翻譯仍儲存中文原文的問題。
+## Logo 檔名
+- `assets/psychology_logo.jpg`
+- `assets/asia_university_logo.png`
 
-### 原因
-部分情況下，Google Translate wrapper 使用 `source="auto"` 時可能沒有
-真正翻譯，卻直接回傳原始中文文字。舊版沒有檢查翻譯結果，因此把中文
-內容存入 `title_en`、`content_en`。
+Logo 未放入時，系統仍可啟動，只是不顯示圖片。
 
-### 本版處理
-- 優先使用 `source="zh-TW"` 翻譯繁體中文。
-- 失敗時依序重試 `zh-CN`、`auto`。
-- 公告內容逐行翻譯，以保留條列與換行。
-- 檢查翻譯是否與中文原文相同。
-- 檢查英文結果中的中文字比例。
-- 無效翻譯會被拒絕，不會覆蓋資料庫。
-- 後台會提示目前英文欄位仍是中文。
-- 新增「強制重新翻譯為英文並儲存」按鈕。
+## 本機執行
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-## 既有公告修復
+## Streamlit Cloud 更新
+1. 將整個資料夾內容上傳至 GitHub repository。
+2. 保留原本 Streamlit Cloud 的 Supabase Secrets。
+3. Main file path 設為 `app.py`。
+4. Deploy／Reboot app。
 
-部署後進入：
-
-`Announcements / 公告 → 編輯雙語公告`
-
-選擇既有公告，按：
-
-`強制重新翻譯為英文並儲存`
-
-即可覆蓋先前錯誤儲存的中文英文欄位。
+升級前請先備份 Supabase。

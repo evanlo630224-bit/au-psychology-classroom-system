@@ -49,7 +49,7 @@ bookings = Table("bookings", metadata,
     Column("identification_code", String(100), nullable=False), Column("phone", String(50), nullable=False),
     Column("email", String(255), nullable=False), Column("reason", Text, nullable=False),
     Column("status", String(20), nullable=False, default="有效"), Column("created_at", DateTime, default=datetime.now),
-    Column("updated_at", DateTime), Column("cancel_reason", Text), Column("cancelled_at", DateTime))
+    Column("updated_at", DateTime), Column("cancel_reason", Text), Column("cancelled_at", DateTime), Column("reviewed_by", String(100)), Column("reviewed_at", DateTime), Column("review_note", Text), Column("approval_mode", String(20)))
 open_periods = Table("open_periods", metadata,
     Column("id", Integer, primary_key=True), Column("semester", String(30), nullable=False),
     Column("start_date", Date, nullable=False), Column("end_date", Date, nullable=False),
@@ -66,9 +66,54 @@ audit_logs = Table("audit_logs", metadata,
     Column("target_type", String(50), nullable=False), Column("target_id", String(100)),
     Column("detail", Text), Column("created_at", DateTime, default=datetime.now))
 
+announcements = Table("announcements", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("title_zh", String(255), nullable=False),
+    Column("title_en", String(255)),
+    Column("content_zh", Text, nullable=False),
+    Column("content_en", Text),
+    Column("category", String(50), nullable=False, default="一般公告"),
+    Column("publish_start", Date),
+    Column("publish_end", Date),
+    Column("is_published", Boolean, nullable=False, default=True),
+    Column("created_at", DateTime, default=datetime.now),
+    Column("updated_at", DateTime))
+
+system_settings = Table("system_settings", metadata,
+    Column("setting_key", String(100), primary_key=True),
+    Column("setting_value", String(500), nullable=False),
+    Column("updated_at", DateTime, default=datetime.now))
+
 def _date(v): return v if isinstance(v, date) else date.fromisoformat(str(v))
 def _time(v): return v if isinstance(v, time) else time.fromisoformat(str(v)[:5])
+
+def as_date(value):
+    """Normalize string/date/datetime values into a Python date."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text_value = str(value).strip()
+    if not text_value:
+        raise ValueError("Date value cannot be empty.")
+    return date.fromisoformat(text_value[:10])
+
+
+
+def as_time(value):
+    """Normalize string/time/datetime values into a Python time."""
+    if isinstance(value, datetime):
+        return value.time().replace(tzinfo=None)
+    if isinstance(value, time):
+        return value.replace(tzinfo=None)
+    text_value = str(value).strip()
+    if not text_value:
+        raise ValueError("Time value cannot be empty.")
+    return time.fromisoformat(text_value[:5])
+
+
 def _rows(r): return [dict(x._mapping) for x in r]
+rows = _rows
 def _column_names(table_name):
     try:
         return {col["name"] for col in inspect(engine).get_columns(table_name)}
@@ -120,8 +165,32 @@ def migrate_schema():
             ("updated_at", 'updated_at TIMESTAMP'),
             ("cancel_reason", 'cancel_reason TEXT'),
             ("cancelled_at", 'cancelled_at TIMESTAMP'),
+            ("reviewed_by", 'reviewed_by VARCHAR(100)'),
+            ("reviewed_at", 'reviewed_at TIMESTAMP'),
+            ("review_note", 'review_note TEXT'),
+            ("approval_mode", 'approval_mode VARCHAR(20)'),
         ]:
             _add_column_if_missing("bookings", name, ddl)
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE bookings SET status = '已核准' WHERE status = '有效'"))
+            conn.execute(text("UPDATE bookings SET approval_mode = '歷史資料' WHERE approval_mode IS NULL AND status = '已核准'"))
+
+    if "announcements" in tables:
+        for name, ddl in [
+            ("title_en", 'title_en VARCHAR(255)'),
+            ("content_en", 'content_en TEXT'),
+            ("category", "category VARCHAR(50)"),
+            ("publish_start", 'publish_start DATE'),
+            ("publish_end", 'publish_end DATE'),
+            ("is_published", 'is_published BOOLEAN'),
+            ("created_at", 'created_at TIMESTAMP'),
+            ("updated_at", 'updated_at TIMESTAMP'),
+        ]:
+            _add_column_if_missing("announcements", name, ddl)
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE announcements SET category = '一般公告' WHERE category IS NULL OR TRIM(category) = ''"))
+            conn.execute(text("UPDATE announcements SET is_published = TRUE WHERE is_published IS NULL"))
+            conn.execute(text("UPDATE announcements SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
 
 
 def init_db():
@@ -254,17 +323,43 @@ def check_booking_conflict(booking_date,room,start_time,end_time,exclude_booking
     s,e=_time(start_time),_time(end_time)
     for x in get_course_blocks(booking_date,room):
         if s<x["end_time"] and e>x["start_time"]:return {"type":"course","detail":x["course_name"]}
-    cond=[bookings.c.booking_date==_date(booking_date),bookings.c.room==room,bookings.c.status=="有效",s<bookings.c.end_time,e>bookings.c.start_time]
+    cond=[bookings.c.booking_date==_date(booking_date),bookings.c.room==room,bookings.c.status.in_(["待審核","已核准"]),s<bookings.c.end_time,e>bookings.c.start_time]
     if exclude_booking_id:cond.append(bookings.c.booking_id!=exclude_booking_id)
     with engine.connect() as c:r=c.execute(select(bookings.c.booking_id).where(and_(*cond)).limit(1)).first()
     return {"type":"booking","detail":r._mapping["booking_id"]} if r else None
-def create_booking(booking_date,room,start_time,end_time,applicant_type,applicant_name,identification_code,phone,email,reason):
+def create_booking(booking_date, room, start_time, end_time, applicant_type,
+                   applicant_name, identification_code, phone, email, reason):
+    auto_approve = get_setting_bool("auto_approve_bookings", False)
+    booking_status = "已核准" if auto_approve else "待審核"
+    approval_mode = "自動核准" if auto_approve else "人工審核"
+    reviewed_by = "SYSTEM" if auto_approve else None
+    reviewed_at = datetime.now() if auto_approve else None
     with engine.begin() as c:
-        r=c.execute(insert(bookings).values(booking_id=None,booking_date=_date(booking_date),room=room,start_time=_time(start_time),end_time=_time(end_time),applicant_type=applicant_type,applicant_name=applicant_name,identification_code=identification_code,phone=phone,email=email,reason=reason,status="有效",created_at=datetime.now()))
-        rid=int(r.inserted_primary_key[0]); bid=f"AU-PSY-{_date(booking_date).strftime('%Y%m%d')}-{rid:05d}"; c.execute(update(bookings).where(bookings.c.id==rid).values(booking_id=bid))
-    log_action("CREATE","booking",bid,f"{room} {start_time}-{end_time}"); return bid
+        r = c.execute(insert(bookings).values(
+            booking_id=None,
+            booking_date=_date(booking_date),
+            room=room,
+            start_time=_time(start_time),
+            end_time=_time(end_time),
+            applicant_type=applicant_type,
+            applicant_name=applicant_name,
+            identification_code=identification_code,
+            phone=phone,
+            email=email,
+            reason=reason,
+            status=booking_status,
+            approval_mode=approval_mode,
+            reviewed_by=reviewed_by,
+            reviewed_at=reviewed_at,
+            created_at=datetime.now(),
+        ))
+        rid = int(r.inserted_primary_key[0])
+        bid = f"AU-PSY-{_date(booking_date).strftime('%Y%m%d')}-{rid:05d}"
+        c.execute(update(bookings).where(bookings.c.id == rid).values(booking_id=bid))
+    log_action("CREATE", "booking", bid, f"{room} {start_time}-{end_time} status={booking_status}")
+    return bid, booking_status
 
-def get_bookings_by_date_room(booking_date, room, status="有效"):
+def get_bookings_by_date_room(booking_date, room, status=None):
     """Return only bookings required by the classroom availability page."""
     conditions = [
         bookings.c.booking_date == as_date(booking_date),
@@ -272,6 +367,8 @@ def get_bookings_by_date_room(booking_date, room, status="有效"):
     ]
     if status:
         conditions.append(bookings.c.status == status)
+    else:
+        conditions.append(bookings.c.status.in_(["待審核", "已核准"]))
 
     stmt = (
         select(bookings)
@@ -299,7 +396,7 @@ def get_room_status_counts(booking_date, room):
     stmt = select(func.count()).select_from(bookings).where(and_(
         bookings.c.booking_date == as_date(booking_date),
         bookings.c.room == room,
-        bookings.c.status == "有效",
+        bookings.c.status.in_(["待審核", "已核准"]),
     ))
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar_one())
@@ -311,15 +408,167 @@ def get_booking_by_id(booking_id):
     with engine.connect() as c:r=c.execute(select(bookings).where(bookings.c.booking_id==booking_id)).first()
     return dict(r._mapping) if r else None
 def update_booking(booking_id,booking_date,room,start_time,end_time,reason):
-    with engine.begin() as c:c.execute(update(bookings).where(and_(bookings.c.booking_id==booking_id,bookings.c.status=="有效")).values(booking_date=_date(booking_date),room=room,start_time=_time(start_time),end_time=_time(end_time),reason=reason,updated_at=datetime.now()))
+    with engine.begin() as c:c.execute(update(bookings).where(and_(bookings.c.booking_id==booking_id,bookings.c.status.in_(["待審核","已核准"]))).values(booking_date=_date(booking_date),room=room,start_time=_time(start_time),end_time=_time(end_time),reason=reason,updated_at=datetime.now()))
 def cancel_booking(booking_id,cancel_reason):
-    with engine.begin() as c:c.execute(update(bookings).where(and_(bookings.c.booking_id==booking_id,bookings.c.status=="有效")).values(status="已取消",cancel_reason=cancel_reason,cancelled_at=datetime.now()))
+    with engine.begin() as c:c.execute(update(bookings).where(and_(bookings.c.booking_id==booking_id,bookings.c.status.in_(["待審核","已核准"]))).values(status="已取消",cancel_reason=cancel_reason,cancelled_at=datetime.now()))
 def get_dashboard_counts():
     with engine.connect() as c:
-        t=c.execute(select(func.count()).select_from(authorized_users).where(and_(authorized_users.c.user_type=="教師",authorized_users.c.status=="啟用"))).scalar_one(); s=c.execute(select(func.count()).select_from(authorized_users).where(and_(authorized_users.c.user_type=="學生",authorized_users.c.status=="啟用"))).scalar_one(); a=c.execute(select(func.count()).select_from(bookings).where(bookings.c.status=="有效")).scalar_one()
+        t=c.execute(select(func.count()).select_from(authorized_users).where(and_(authorized_users.c.user_type=="教師",authorized_users.c.status=="啟用"))).scalar_one(); s=c.execute(select(func.count()).select_from(authorized_users).where(and_(authorized_users.c.user_type=="學生",authorized_users.c.status=="啟用"))).scalar_one(); a=c.execute(select(func.count()).select_from(bookings).where(bookings.c.status.in_(["待審核","已核准"]))).scalar_one()
     return {"teachers":t,"students":s,"active_bookings":a}
 def get_audit_logs(limit=1000):
     with engine.connect() as c:return _rows(c.execute(select(audit_logs).order_by(audit_logs.c.id.desc()).limit(max(1,min(int(limit),5000)))))
+
+
+
+def get_setting(setting_key, default=None):
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(system_settings.c.setting_value).where(
+                system_settings.c.setting_key == setting_key
+            )
+        ).first()
+    return row[0] if row else default
+
+
+def set_setting(setting_key, setting_value):
+    value = str(setting_value)
+    with engine.begin() as conn:
+        exists = conn.execute(
+            select(system_settings.c.setting_key).where(
+                system_settings.c.setting_key == setting_key
+            )
+        ).first()
+        if exists:
+            conn.execute(
+                update(system_settings)
+                .where(system_settings.c.setting_key == setting_key)
+                .values(setting_value=value, updated_at=datetime.now())
+            )
+        else:
+            conn.execute(
+                insert(system_settings).values(
+                    setting_key=setting_key,
+                    setting_value=value,
+                    updated_at=datetime.now(),
+                )
+            )
+    log_action("SETTING", "system_settings", setting_key, value)
+
+
+def get_setting_bool(setting_key, default=False):
+    value = get_setting(setting_key, None)
+    if value is None:
+        return bool(default)
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "啟用"}
+
+
+def create_announcement(title_zh, content_zh, title_en="", content_en="",
+                        category="一般公告", publish_start=None, publish_end=None,
+                        is_published=True):
+    with engine.begin() as conn:
+        result = conn.execute(insert(announcements).values(
+            title_zh=title_zh.strip(),
+            title_en=title_en.strip(),
+            content_zh=content_zh.strip(),
+            content_en=content_en.strip(),
+            category=category,
+            publish_start=as_date(publish_start) if publish_start else None,
+            publish_end=as_date(publish_end) if publish_end else None,
+            is_published=bool(is_published),
+            created_at=datetime.now(),
+        ))
+        announcement_id = int(result.inserted_primary_key[0])
+    log_action("CREATE", "announcement", str(announcement_id), title_zh)
+    return announcement_id
+
+
+def update_announcement(announcement_id, title_zh, content_zh, title_en="",
+                        content_en="", category="一般公告", publish_start=None,
+                        publish_end=None, is_published=True):
+    with engine.begin() as conn:
+        conn.execute(
+            update(announcements)
+            .where(announcements.c.id == int(announcement_id))
+            .values(
+                title_zh=title_zh.strip(),
+                title_en=title_en.strip(),
+                content_zh=content_zh.strip(),
+                content_en=content_en.strip(),
+                category=category,
+                publish_start=as_date(publish_start) if publish_start else None,
+                publish_end=as_date(publish_end) if publish_end else None,
+                is_published=bool(is_published),
+                updated_at=datetime.now(),
+            )
+        )
+    log_action("UPDATE", "announcement", str(announcement_id), title_zh)
+
+
+def delete_announcement(announcement_id):
+    with engine.begin() as conn:
+        conn.execute(delete(announcements).where(announcements.c.id == int(announcement_id)))
+    log_action("DELETE", "announcement", str(announcement_id), "")
+
+
+def get_all_announcements():
+    with engine.connect() as conn:
+        return _rows(conn.execute(
+            select(announcements).order_by(
+                announcements.c.created_at.desc(),
+                announcements.c.id.desc(),
+            )
+        ))
+
+
+def get_active_announcements(reference_date=None):
+    current = as_date(reference_date or date.today())
+    conditions = [
+        announcements.c.is_published.is_(True),
+        (announcements.c.publish_start.is_(None) | (announcements.c.publish_start <= current)),
+        (announcements.c.publish_end.is_(None) | (announcements.c.publish_end >= current)),
+    ]
+    with engine.connect() as conn:
+        return _rows(conn.execute(
+            select(announcements)
+            .where(and_(*conditions))
+            .order_by(announcements.c.created_at.desc(), announcements.c.id.desc())
+        ))
+
+
+def review_booking(booking_id, decision, reviewer="Administrator", note=""):
+    if decision not in {"已核准", "已退回"}:
+        raise ValueError("Invalid review decision.")
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(bookings)
+            .where(and_(
+                bookings.c.booking_id == booking_id,
+                bookings.c.status == "待審核",
+            ))
+            .values(
+                status=decision,
+                reviewed_by=reviewer,
+                reviewed_at=datetime.now(),
+                review_note=note.strip(),
+                approval_mode="人工審核",
+                updated_at=datetime.now(),
+            )
+        )
+    if not result.rowcount:
+        raise ValueError("This reservation is no longer pending review.")
+    log_action("REVIEW", "booking", booking_id, f"{decision}: {note}")
+    return decision
+
+
+def get_pending_bookings(limit=500):
+    safe_limit = max(1, min(int(limit), 2000))
+    with engine.connect() as conn:
+        return _rows(conn.execute(
+            select(bookings)
+            .where(bookings.c.status == "待審核")
+            .order_by(bookings.c.created_at.asc())
+            .limit(safe_limit)
+        ))
 
 
 def initialize_database_once():

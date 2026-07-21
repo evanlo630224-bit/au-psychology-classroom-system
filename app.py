@@ -2,7 +2,7 @@ import base64
 import io
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -336,7 +336,7 @@ def _availability_rows(query_date, query_room, language=None):
     bookings = get_bookings_by_date_room(
         str(query_date),
         query_room,
-        status="有效",
+        status=None,
     )
     output = []
     for start_time, end_time in SLOTS:
@@ -397,6 +397,21 @@ def cached_audit_logs(limit=300):
     return get_audit_logs(limit)
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_announcements(active_only=True):
+    return get_active_announcements() if active_only else get_all_announcements()
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def cached_pending_bookings(limit=500):
+    return get_pending_bookings(limit)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_auto_approve_setting():
+    return get_setting_bool("auto_approve_bookings", False)
+
+
 def clear_data_cache():
     st.cache_data.clear()
 
@@ -422,9 +437,15 @@ def render_public_schedule():
 
 def render_public_announcements():
     topbar(language_selector=True)
-    lang=st.session_state.language; p=PORTAL_TEXT[lang]
-    st.markdown(f'<div class="public-shell"><div class="public-title">{p["notice_page"]}</div><div class="public-sub">{p["notice_page_sub"]}</div></div>', unsafe_allow_html=True)
-    period=get_active_open_period()
+    lang = st.session_state.language
+    p = PORTAL_TEXT[lang]
+    st.markdown(
+        f'<div class="public-shell"><div class="public-title">{p["notice_page"]}</div>'
+        f'<div class="public-sub">{p["notice_page_sub"]}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    period = cached_active_period()
     if lang == "English":
         if period:
             st.success(
@@ -432,11 +453,7 @@ def render_public_announcements():
                 f'Reservation period: {period["start_date"]} – {period["end_date"]}'
             )
         else:
-            st.warning(
-                "No classroom reservation period has been configured. "
-                "Please check department announcements."
-            )
-        html='<div class="notice-card"><b>Eligibility</b><p>This system is limited to Department of Psychology faculty and currently enrolled students. Login credentials are verified against the authorized roster.</p></div><div class="notice-card"><b>Scheduled Courses Take Priority</b><p>Classrooms cannot be reserved during scheduled course periods. The system checks both course schedules and existing reservations before submission.</p></div><div class="notice-card"><b>Accurate Contact Information</b><p>Please provide a valid phone number, email address, and clear purpose for administrative follow-up.</p></div>'
+            st.warning("No classroom reservation period has been configured.")
     else:
         if period:
             st.success(
@@ -444,9 +461,37 @@ def render_public_announcements():
                 f'借用期間：{period["start_date"]} ～ {period["end_date"]}'
             )
         else:
-            st.warning("目前尚未設定教室借用開放期間，請留意系辦公告。")
-        html='<div class="notice-card"><b>借用資格</b><p>本系統僅供亞洲大學心理學系教師及在學學生使用，登入時須通過名冊驗證。</p></div><div class="notice-card"><b>課程時段優先</b><p>正式課表已占用的時段不開放借用；送出申請前，系統會再次進行課程與借用衝突檢查。</p></div><div class="notice-card"><b>資料正確性</b><p>請填寫有效聯絡手機、Email與具體借用事由，以利系辦聯絡及行政管理。</p></div>'
-    st.markdown(html, unsafe_allow_html=True)
+            st.warning("目前尚未設定教室借用開放期間。")
+
+    notices = cached_announcements(True)
+    if notices:
+        for item in notices:
+            title = item.get("title_en") if lang == "English" else item.get("title_zh")
+            content = item.get("content_en") if lang == "English" else item.get("content_zh")
+            title = title or item.get("title_zh") or "Announcement"
+            content = content or item.get("content_zh") or ""
+            category = item.get("category") or ""
+            st.markdown(
+                f'<div class="notice-card"><b>{category}｜{title}</b>'
+                f'<p>{content}</p></div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("No current announcements." if lang == "English" else "目前沒有其他公告。")
+
+    if lang == "English":
+        st.markdown(
+            '<div class="notice-card"><b>Reservation Date Rule</b>'
+            '<p>Faculty and students may reserve classrooms only from the third day after the application date.</p></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="notice-card"><b>借用日期規則</b>'
+            '<p>教師及學生僅能申請送出當日 N+3 日起的教室時段。</p></div>',
+            unsafe_allow_html=True,
+        )
+
     if st.button(p["back"], use_container_width=True, key="back_notice"):
         _set_public_page("login")
     return None
@@ -586,7 +631,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V9.1 Performance Optimization Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V9.3 Announcement & Approval Workflow Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -597,7 +642,7 @@ def render_dashboard() -> None:
     a, b, c, d = st.columns(4)
     a.metric("教師 Faculty", counts["teachers"])
     b.metric("學生 Students", counts["students"])
-    c.metric("有效借用 Active", counts["active_bookings"])
+    c.metric("進行中借用 Active", counts["active_bookings"])
     d.metric("專業教室 Rooms", len(ROOMS))
     period = cached_active_period()
     if period:
@@ -613,38 +658,103 @@ def render_dashboard() -> None:
 
 def reserve():
     user = st.session_state.user
-    st.markdown("## 我要借教室 / Reserve")
-    st.info(f"登入者：{user['name']}（{user['user_type']}）")
+    lang = st.session_state.language
+    is_english = lang == "English"
+    earliest_date = date.today() + timedelta(days=3)
+
+    st.markdown("## Reserve a Classroom" if is_english else "## 我要借教室 / Reserve")
+    st.info(
+        f"Applicant: {user['name']} ({user['user_type']})"
+        if is_english else
+        f"登入者：{user['name']}（{user['user_type']}）"
+    )
+    st.caption(
+        f"Earliest available reservation date: {earliest_date} (N+3 rule)"
+        if is_english else
+        f"最早可申請日期：{earliest_date}（送出當日 N+3 日）"
+    )
+
     with st.form("booking"):
         left, right = st.columns(2)
         with left:
-            booking_date = st.date_input("借用日期", value=date.today(), min_value=date.today())
-            room = st.selectbox("教室", ROOMS)
-            start = st.selectbox("開始時間", [x for x, _ in SLOTS])
-            end = st.selectbox("結束時間", [x for _, x in SLOTS])
+            booking_date = st.date_input(
+                "Reservation Date" if is_english else "借用日期",
+                value=earliest_date,
+                min_value=earliest_date,
+            )
+            room = st.selectbox("Classroom" if is_english else "教室", ROOMS)
+            start_time = st.selectbox("Start Time" if is_english else "開始時間", [x for x, _ in SLOTS])
+            end_time = st.selectbox("End Time" if is_english else "結束時間", [x for _, x in SLOTS])
         with right:
-            phone = st.text_input("聯絡手機")
-            email = st.text_input("聯絡信箱", value=user.get("email") or "")
-            reason = st.text_area("借用事由", height=160)
-        submitted = st.form_submit_button("送出申請", use_container_width=True)
+            phone = st.text_input("Mobile Phone" if is_english else "聯絡手機")
+            email = st.text_input("Email", value=user.get("email") or "")
+            reason = st.text_area("Purpose" if is_english else "借用事由", height=160)
+        submitted = st.form_submit_button(
+            "Submit Application" if is_english else "送出申請",
+            use_container_width=True,
+        )
+
     if submitted:
+        if booking_date < earliest_date:
+            st.error(
+                "The reservation date must be at least three days after today."
+                if is_english else
+                "借用日期必須為送出申請當日 N+3 日起。"
+            )
+            return
         if not phone.strip() or not email.strip() or not reason.strip():
-            st.error("請完整填寫必填欄位。")
+            st.error("Please complete all required fields." if is_english else "請完整填寫必填欄位。")
             return
-        if not valid_phone(phone) or not valid_email(email) or start >= end:
-            st.error("輸入格式不正確。")
+        if not valid_phone(phone) or not valid_email(email) or start_time >= end_time:
+            st.error("Invalid input format." if is_english else "輸入格式不正確。")
             return
+
         period = cached_active_period()
-        if not period or not (str(period["start_date"]) <= str(booking_date) <= str(period["end_date"])):
-            st.error("所選日期不在開放期間。")
+        if not period or not (
+            str(period["start_date"]) <= str(booking_date) <= str(period["end_date"])
+        ):
+            st.error(
+                "The selected date is outside the reservation period."
+                if is_english else
+                "所選日期不在開放期間。"
+            )
             return
-        conflict = check_booking_conflict(str(booking_date), room, start, end)
+
+        conflict = check_booking_conflict(str(booking_date), room, start_time, end_time)
         if conflict:
-            st.error(f"時段衝突：{conflict['detail']}")
+            st.error(
+                f"Time conflict: {conflict['detail']}"
+                if is_english else
+                f"時段衝突：{conflict['detail']}"
+            )
             return
-        booking_id = create_booking(str(booking_date), room, start, end, user["user_type"], user["name"], user["identification_code"], phone, email, reason)
+
+        booking_id, booking_status = create_booking(
+            str(booking_date),
+            room,
+            start_time,
+            end_time,
+            user["user_type"],
+            user["name"],
+            user["identification_code"],
+            phone,
+            email,
+            reason,
+        )
         clear_data_cache()
-        st.success(f"申請完成，借用編號：{booking_id}")
+
+        if booking_status == "已核准":
+            st.success(
+                f"Application approved automatically. Reservation No.: {booking_id}"
+                if is_english else
+                f"申請已自動核准，借用編號：{booking_id}"
+            )
+        else:
+            st.success(
+                f"Application submitted and pending administrator review. Application No.: {booking_id}"
+                if is_english else
+                f"申請已送出，待管理員審核。申請編號：{booking_id}"
+            )
 
 
 def query():
@@ -666,13 +776,125 @@ def admin_page():
 
     section = st.radio(
         "管理功能 / Administration Menu",
-        ["儀表板", "名冊管理", "開放期間", "課表管理", "借用管理", "操作紀錄"],
+        ["儀表板", "公告管理", "名冊管理", "開放期間", "課表管理", "借用審核", "借用管理", "操作紀錄"],
         horizontal=True,
         key="admin_section",
     )
 
     if section == "儀表板":
         _ = render_dashboard()
+        return None
+
+    if section == "公告管理":
+        st.markdown("### 系統公告管理 / Announcement Management")
+        rows = cached_announcements(False)
+
+        mode = st.radio("作業", ["新增公告", "修改／刪除公告"], horizontal=True)
+        categories = ["一般公告", "開放時間", "重要通知", "系統維護"]
+
+        if mode == "新增公告":
+            with st.form("announcement_create"):
+                title_zh = st.text_input("中文標題")
+                title_en = st.text_input("English Title")
+                content_zh = st.text_area("中文內容", height=130)
+                content_en = st.text_area("English Content", height=130)
+                category = st.selectbox("公告類別", categories)
+                c1, c2 = st.columns(2)
+                with c1:
+                    publish_start = st.date_input("公告開始日", value=date.today())
+                with c2:
+                    publish_end = st.date_input(
+                        "公告結束日",
+                        value=date.today() + timedelta(days=30),
+                    )
+                is_published = st.checkbox("立即發布", value=True)
+                submitted = st.form_submit_button("新增公告", use_container_width=True)
+
+            if submitted:
+                if not title_zh.strip() or not content_zh.strip():
+                    st.error("中文標題與中文內容為必填。")
+                elif publish_start > publish_end:
+                    st.error("公告結束日不得早於開始日。")
+                else:
+                    announcement_id = create_announcement(
+                        title_zh, content_zh, title_en, content_en,
+                        category, publish_start, publish_end, is_published,
+                    )
+                    clear_data_cache()
+                    st.success(f"公告已新增，編號：{announcement_id}")
+                    st.rerun()
+        else:
+            if not rows:
+                st.info("目前尚無公告。")
+                return None
+
+            labels = {
+                row["id"]: f'#{row["id"]}｜{row.get("category","")}｜{row.get("title_zh","")}'
+                for row in rows
+            }
+            selected_id = st.selectbox(
+                "選擇公告",
+                list(labels.keys()),
+                format_func=lambda value: labels[value],
+            )
+            item = next(row for row in rows if row["id"] == selected_id)
+
+            with st.form("announcement_edit"):
+                title_zh = st.text_input("中文標題", value=item.get("title_zh") or "")
+                title_en = st.text_input("English Title", value=item.get("title_en") or "")
+                content_zh = st.text_area("中文內容", value=item.get("content_zh") or "", height=130)
+                content_en = st.text_area("English Content", value=item.get("content_en") or "", height=130)
+                category = st.selectbox(
+                    "公告類別",
+                    categories,
+                    index=categories.index(item.get("category"))
+                    if item.get("category") in categories else 0,
+                )
+                c1, c2 = st.columns(2)
+                with c1:
+                    publish_start = st.date_input(
+                        "公告開始日",
+                        value=item.get("publish_start") or date.today(),
+                        key="edit_publish_start",
+                    )
+                with c2:
+                    publish_end = st.date_input(
+                        "公告結束日",
+                        value=item.get("publish_end") or (date.today() + timedelta(days=30)),
+                        key="edit_publish_end",
+                    )
+                is_published = st.checkbox(
+                    "發布中",
+                    value=bool(item.get("is_published")),
+                )
+                save = st.form_submit_button("儲存修改", use_container_width=True)
+
+            if save:
+                if not title_zh.strip() or not content_zh.strip():
+                    st.error("中文標題與中文內容為必填。")
+                elif publish_start > publish_end:
+                    st.error("公告結束日不得早於開始日。")
+                else:
+                    update_announcement(
+                        selected_id, title_zh, content_zh, title_en, content_en,
+                        category, publish_start, publish_end, is_published,
+                    )
+                    clear_data_cache()
+                    st.success("公告已更新。")
+                    st.rerun()
+
+            confirm_delete = st.checkbox("我確認要刪除此公告")
+            if st.button("刪除公告", type="secondary", use_container_width=True):
+                if not confirm_delete:
+                    st.error("請先勾選刪除確認。")
+                else:
+                    delete_announcement(selected_id)
+                    clear_data_cache()
+                    st.warning("公告已刪除。")
+                    st.rerun()
+
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         return None
 
     if section == "名冊管理":
@@ -727,6 +949,22 @@ def admin_page():
                 save_open_period(semester, str(start_date), str(end_date))
                 clear_data_cache()
                 st.success("開放期間已儲存。")
+
+        st.divider()
+        st.markdown("### 借用審核模式")
+        current_auto = cached_auto_approve_setting()
+        auto_approve = st.toggle(
+            "符合規則且無衝突時自動核准",
+            value=current_auto,
+            help="關閉時，所有申請先進入待審核；開啟時，通過日期、開放期間及衝堂檢查後立即核准。",
+        )
+        if auto_approve != current_auto:
+            set_setting("auto_approve_bookings", str(bool(auto_approve)).lower())
+            clear_data_cache()
+            st.success("審核模式已更新。")
+            st.rerun()
+
+        st.caption("系統開放時間的文字公告，可至「公告管理」新增或修改，公告類別選擇「開放時間」。")
         return None
 
     if section == "課表管理":
@@ -764,6 +1002,68 @@ def admin_page():
                 st.warning(f"已刪除 {count} 筆課表資料。")
         else:
             st.info("目前尚無課表資料。")
+        return None
+
+    if section == "借用審核":
+        st.markdown("### 借用申請審核 / Reservation Review")
+        auto_mode = cached_auto_approve_setting()
+        if auto_mode:
+            st.info("目前為自動核准模式；符合規則且無衝突的申請會立即核准。")
+        else:
+            st.warning("目前為人工審核模式；所有新申請將先列為待審核。")
+
+        pending = cached_pending_bookings(500)
+        if not pending:
+            st.success("目前沒有待審核申請。")
+            return None
+
+        st.dataframe(pd.DataFrame(pending), use_container_width=True, hide_index=True)
+        labels = {
+            row["booking_id"]: (
+                f'{row["booking_id"]}｜{row["booking_date"]}｜'
+                f'{row["room"]}｜{row["applicant_name"]}'
+            )
+            for row in pending
+        }
+        booking_id = st.selectbox(
+            "選擇待審核申請",
+            list(labels.keys()),
+            format_func=lambda value: labels[value],
+        )
+        item = next(row for row in pending if row["booking_id"] == booking_id)
+        st.markdown(
+            f"**借用人：** {item['applicant_name']}（{item['applicant_type']}）  \n"
+            f"**日期時間：** {item['booking_date']} "
+            f"{str(item['start_time'])[:5]}–{str(item['end_time'])[:5]}  \n"
+            f"**教室：** {item['room']}  \n"
+            f"**事由：** {item['reason']}"
+        )
+        note = st.text_area("審核備註")
+        approve_col, reject_col = st.columns(2)
+        if approve_col.button("核准申請", use_container_width=True):
+            conflict = check_booking_conflict(
+                str(item["booking_date"]),
+                item["room"],
+                str(item["start_time"])[:5],
+                str(item["end_time"])[:5],
+                exclude_booking_id=booking_id,
+            )
+            if conflict:
+                st.error(f"目前已有衝突，無法核准：{conflict['detail']}")
+            else:
+                review_booking(booking_id, "已核准", "Administrator", note)
+                clear_data_cache()
+                st.success("申請已核准。")
+                st.rerun()
+
+        if reject_col.button("退回申請", use_container_width=True):
+            if not note.strip():
+                st.error("退回申請時請填寫原因。")
+            else:
+                review_booking(booking_id, "已退回", "Administrator", note)
+                clear_data_cache()
+                st.warning("申請已退回。")
+                st.rerun()
         return None
 
     if section == "借用管理":
@@ -847,7 +1147,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V9.1", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V9.3", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -907,8 +1207,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("AU-PCRS V9.1")
-    st.caption("Performance Optimization Edition")
+    st.caption("AU-PCRS V9.3")
+    st.caption("Announcement & Approval Workflow Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

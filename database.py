@@ -263,6 +263,48 @@ def create_booking(booking_date,room,start_time,end_time,applicant_type,applican
         r=c.execute(insert(bookings).values(booking_id=None,booking_date=_date(booking_date),room=room,start_time=_time(start_time),end_time=_time(end_time),applicant_type=applicant_type,applicant_name=applicant_name,identification_code=identification_code,phone=phone,email=email,reason=reason,status="有效",created_at=datetime.now()))
         rid=int(r.inserted_primary_key[0]); bid=f"AU-PSY-{_date(booking_date).strftime('%Y%m%d')}-{rid:05d}"; c.execute(update(bookings).where(bookings.c.id==rid).values(booking_id=bid))
     log_action("CREATE","booking",bid,f"{room} {start_time}-{end_time}"); return bid
+
+def get_bookings_by_date_room(booking_date, room, status="有效"):
+    """Return only bookings required by the classroom availability page."""
+    conditions = [
+        bookings.c.booking_date == as_date(booking_date),
+        bookings.c.room == room,
+    ]
+    if status:
+        conditions.append(bookings.c.status == status)
+
+    stmt = (
+        select(bookings)
+        .where(and_(*conditions))
+        .order_by(bookings.c.start_time)
+    )
+    with engine.connect() as conn:
+        return rows(conn.execute(stmt))
+
+
+def get_recent_bookings(limit=300):
+    """Return a bounded list for the administration screen."""
+    safe_limit = max(1, min(int(limit), 2000))
+    stmt = (
+        select(bookings)
+        .order_by(bookings.c.booking_date.desc(), bookings.c.start_time.desc())
+        .limit(safe_limit)
+    )
+    with engine.connect() as conn:
+        return rows(conn.execute(stmt))
+
+
+def get_room_status_counts(booking_date, room):
+    """Small helper for dashboard/public schedule without loading all bookings."""
+    stmt = select(func.count()).select_from(bookings).where(and_(
+        bookings.c.booking_date == as_date(booking_date),
+        bookings.c.room == room,
+        bookings.c.status == "有效",
+    ))
+    with engine.connect() as conn:
+        return int(conn.execute(stmt).scalar_one())
+
+
 def get_all_bookings():
     with engine.connect() as c:return _rows(c.execute(select(bookings).order_by(bookings.c.booking_date.desc(),bookings.c.start_time.desc())))
 def get_booking_by_id(booking_id):
@@ -278,3 +320,13 @@ def get_dashboard_counts():
     return {"teachers":t,"students":s,"active_bookings":a}
 def get_audit_logs(limit=1000):
     with engine.connect() as c:return _rows(c.execute(select(audit_logs).order_by(audit_logs.c.id.desc()).limit(max(1,min(int(limit),5000)))))
+
+
+def initialize_database_once():
+    """Initialize schema and run migration once per process."""
+    init_db()
+    try:
+        migrate_schema()
+    except NameError:
+        pass
+    return True

@@ -333,7 +333,11 @@ def _availability_rows(query_date, query_room, language=None):
     language = language or st.session_state.get("language", "中文")
     p = PORTAL_TEXT[language]
     courses = get_course_blocks(str(query_date), query_room)
-    bookings = [item for item in get_all_bookings() if str(item["booking_date"]) == str(query_date) and item["room"] == query_room and item["status"] == "有效"]
+    bookings = get_bookings_by_date_room(
+        str(query_date),
+        query_room,
+        status="有效",
+    )
     output = []
     for start_time, end_time in SLOTS:
         status, detail = p["available"], ""
@@ -350,6 +354,51 @@ def _availability_rows(query_date, query_room, language=None):
                     break
         output.append({p["time_col"]: f"{start_time}–{end_time}", p["status_col"]: status, p["detail_col"]: detail})
     return output
+
+
+
+@st.cache_resource(show_spinner=False)
+def cached_initialize_database():
+    return initialize_database_once()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_dashboard_counts():
+    return get_dashboard_counts()
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def cached_database_health():
+    return database_health_check()
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def cached_active_period():
+    return get_active_open_period()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_course_semesters():
+    return get_course_semesters()
+
+
+@st.cache_data(ttl=45, show_spinner=False)
+def cached_authorized_users():
+    return get_all_authorized_users()
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_recent_bookings(limit=300):
+    return get_recent_bookings(limit)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_audit_logs(limit=300):
+    return get_audit_logs(limit)
+
+
+def clear_data_cache():
+    st.cache_data.clear()
 
 
 def render_public_schedule():
@@ -537,25 +586,25 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V9.0 Public Page Magic Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V9.1 Performance Optimization Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
 def render_dashboard() -> None:
     """Render the dashboard directly. Do not wrap this call in st.write()."""
     st.markdown("## 智慧儀表板 / Dashboard")
-    counts = get_dashboard_counts()
+    counts = cached_dashboard_counts()
     a, b, c, d = st.columns(4)
     a.metric("教師 Faculty", counts["teachers"])
     b.metric("學生 Students", counts["students"])
     c.metric("有效借用 Active", counts["active_bookings"])
     d.metric("專業教室 Rooms", len(ROOMS))
-    period = get_active_open_period()
+    period = cached_active_period()
     if period:
         st.success(f"目前開放：{period['semester']}｜{period['start_date']}～{period['end_date']}")
     else:
         st.warning("尚未設定開放借用期間")
-    ok, message = database_health_check()
+    ok, message = cached_database_health()
     if ok:
         st.info(f"✅ Database：{message}")
     else:
@@ -585,7 +634,7 @@ def reserve():
         if not valid_phone(phone) or not valid_email(email) or start >= end:
             st.error("輸入格式不正確。")
             return
-        period = get_active_open_period()
+        period = cached_active_period()
         if not period or not (str(period["start_date"]) <= str(booking_date) <= str(period["end_date"])):
             st.error("所選日期不在開放期間。")
             return
@@ -594,6 +643,7 @@ def reserve():
             st.error(f"時段衝突：{conflict['detail']}")
             return
         booking_id = create_booking(str(booking_date), room, start, end, user["user_type"], user["name"], user["identification_code"], phone, email, reason)
+        clear_data_cache()
         st.success(f"申請完成，借用編號：{booking_id}")
 
 
@@ -612,77 +662,198 @@ def query():
 
 
 def admin_page():
-    st.markdown("## 管理員後台")
-    tabs = st.tabs(["儀表板", "名冊管理", "開放期間", "課表管理", "借用管理", "操作紀錄"])
-    with tabs[0]:
+    st.markdown("## 管理員後台 / Administration")
+
+    section = st.radio(
+        "管理功能 / Administration Menu",
+        ["儀表板", "名冊管理", "開放期間", "課表管理", "借用管理", "操作紀錄"],
+        horizontal=True,
+        key="admin_section",
+    )
+
+    if section == "儀表板":
         _ = render_dashboard()
-    with tabs[1]:
+        return None
+
+    if section == "名冊管理":
         user_type = st.radio("名冊類別", ["教師", "學生"], horizontal=True)
-        upload = st.file_uploader("Excel：辨識碼、姓名、聯絡信箱、狀態", type=["xlsx"], key="roster")
-        replace = st.checkbox("覆蓋此類名冊")
+        upload = st.file_uploader(
+            "Excel欄位：辨識碼、姓名、聯絡信箱、狀態",
+            type=["xlsx"],
+            key="roster_upload",
+        )
+        replace = st.checkbox("覆蓋此類既有名冊")
         if st.button("匯入名冊", use_container_width=True):
             if upload is None:
-                st.error("請先選擇檔案")
+                st.error("請先選擇Excel檔案。")
             else:
                 try:
-                    st.success(import_authorized_users(pd.read_excel(upload, dtype=str).fillna(""), user_type, replace))
+                    result = import_authorized_users(
+                        pd.read_excel(upload, dtype=str).fillna(""),
+                        user_type,
+                        replace,
+                    )
+                    clear_data_cache()
+                    st.success(f"匯入完成：{result}")
                 except Exception as exc:
-                    st.error(exc)
-        rows = get_all_authorized_users()
+                    st.error(f"匯入失敗：{exc}")
+
+        rows = cached_authorized_users()
         if rows:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    with tabs[2]:
+        else:
+            st.info("目前尚無名冊資料。")
+        return None
+
+    if section == "開放期間":
+        current = cached_active_period()
+        if current:
+            st.info(
+                f"目前：{current['semester']}｜"
+                f"{current['start_date']} ～ {current['end_date']}"
+            )
+
         left, right = st.columns(2)
         with left:
-            start_date = st.date_input("開始日期", value=date.today())
+            start_date = st.date_input("開始日期", value=date.today(), key="period_start")
         with right:
-            end_date = st.date_input("結束日期", value=date.today())
-        semester = st.text_input("學期", value="115-1")
+            end_date = st.date_input("結束日期", value=date.today(), key="period_end")
+        semester = st.text_input("學期", value=current["semester"] if current else "115-1")
+
         if st.button("儲存並啟用", use_container_width=True):
             if start_date > end_date:
                 st.error("結束日期不得早於開始日期。")
             else:
                 save_open_period(semester, str(start_date), str(end_date))
-                st.success("已儲存")
-    with tabs[3]:
-        semester = st.text_input("匯入學期", value="115-1", key="sem")
+                clear_data_cache()
+                st.success("開放期間已儲存。")
+        return None
+
+    if section == "課表管理":
+        semester = st.text_input("匯入學期", value="115-1", key="course_semester")
         replace = st.checkbox("清除此學期既有課表")
-        upload = st.file_uploader("課表 Excel", type=["xlsx"], key="course")
+        upload = st.file_uploader("課表Excel", type=["xlsx"], key="course_upload")
+
         if upload is not None:
             frame = pd.read_excel(upload, dtype=str).fillna("")
             st.dataframe(frame.head(20), use_container_width=True, hide_index=True)
             if st.button("確認匯入課表", use_container_width=True):
-                st.success(add_course_blocks(frame, semester, replace))
-        semesters = get_course_semesters()
+                try:
+                    result = add_course_blocks(frame, semester, replace)
+                    clear_data_cache()
+                    st.success(result)
+                except Exception as exc:
+                    st.error(f"匯入失敗：{exc}")
+
+        semesters = cached_course_semesters()
         if semesters:
             st.dataframe(pd.DataFrame(semesters), use_container_width=True, hide_index=True)
-    with tabs[4]:
-        rows = get_all_bookings()
-        if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-            st.download_button("匯出 Excel", xlsx(rows, "借用紀錄"), f"bookings_{date.today()}.xlsx", use_container_width=True)
-            booking_id = st.selectbox("借用編號", [r["booking_id"] for r in rows])
-            reason = st.text_input("取消原因")
-            if st.button("取消借用") and reason.strip():
-                cancel_booking(booking_id, reason.strip())
-                st.rerun()
+            selected = st.selectbox("選擇學期", [row["semester"] for row in semesters])
+            a, b, c = st.columns(3)
+            if a.button("啟用學期", use_container_width=True):
+                set_course_semester_active(selected, True)
+                clear_data_cache()
+                st.success("已啟用。")
+            if b.button("停用學期", use_container_width=True):
+                set_course_semester_active(selected, False)
+                clear_data_cache()
+                st.warning("已停用。")
+            if c.button("刪除學期", use_container_width=True):
+                count = delete_course_semester(selected)
+                clear_data_cache()
+                st.warning(f"已刪除 {count} 筆課表資料。")
         else:
-            st.info("目前尚無借用紀錄")
-    with tabs[5]:
-        logs = get_audit_logs()
+            st.info("目前尚無課表資料。")
+        return None
+
+    if section == "借用管理":
+        limit = st.selectbox("顯示最近紀錄", [100, 300, 500, 1000], index=1)
+        rows = cached_recent_bookings(limit)
+        if not rows:
+            st.info("目前尚無借用紀錄。")
+            return None
+
+        frame = pd.DataFrame(rows)
+        st.dataframe(frame, use_container_width=True, hide_index=True)
+        st.download_button(
+            "匯出 Excel",
+            xlsx(rows, "借用紀錄"),
+            f"bookings_{date.today()}.xlsx",
+            use_container_width=True,
+        )
+
+        booking_id = st.selectbox("選擇借用編號", [r["booking_id"] for r in rows])
+        item = get_booking_by_id(booking_id)
+
+        if item:
+            with st.expander("修改借用資料"):
+                new_date = st.date_input("借用日期", value=item["booking_date"])
+                new_room = st.selectbox("教室", ROOMS, index=ROOMS.index(item["room"]))
+                starts = [s for s, _ in SLOTS]
+                ends = [e for _, e in SLOTS]
+                current_start = str(item["start_time"])[:5]
+                current_end = str(item["end_time"])[:5]
+                new_start = st.selectbox(
+                    "開始時間",
+                    starts,
+                    index=starts.index(current_start) if current_start in starts else 0,
+                )
+                new_end = st.selectbox(
+                    "結束時間",
+                    ends,
+                    index=ends.index(current_end) if current_end in ends else 0,
+                )
+                new_reason = st.text_area("借用事由", value=item["reason"])
+
+                if st.button("儲存修改"):
+                    conflict = check_booking_conflict(
+                        str(new_date),
+                        new_room,
+                        new_start,
+                        new_end,
+                        exclude_booking_id=booking_id,
+                    )
+                    if conflict:
+                        st.error(f"時段衝突：{conflict['detail']}")
+                    else:
+                        update_booking(
+                            booking_id,
+                            str(new_date),
+                            new_room,
+                            new_start,
+                            new_end,
+                            new_reason,
+                        )
+                        clear_data_cache()
+                        st.success("借用資料已更新。")
+
+            cancel_reason = st.text_input("取消原因")
+            if st.button("取消借用") and cancel_reason.strip():
+                cancel_booking(booking_id, cancel_reason.strip())
+                clear_data_cache()
+                st.success("借用已取消。")
+                st.rerun()
+        return None
+
+    if section == "操作紀錄":
+        limit = st.selectbox("顯示最近紀錄", [100, 300, 500, 1000], index=1, key="audit_limit")
+        logs = cached_audit_logs(limit)
         if logs:
             st.dataframe(pd.DataFrame(logs), use_container_width=True, hide_index=True)
         else:
-            st.info("目前尚無操作紀錄")
+            st.info("目前尚無操作紀錄。")
+        return None
+
+    return None
 
 
-st.set_page_config(page_title="AU-PCRS V9.0", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V9.1", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
 try:
-    init_db()
+    cached_initialize_database()
 except Exception as exc:
     style(login_mode=True)
     st.error("資料庫初始化失敗")
@@ -736,8 +907,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("AU-PCRS V9.0")
-    st.caption("Full Bilingual Portal Edition")
+    st.caption("AU-PCRS V9.1")
+    st.caption("Performance Optimization Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

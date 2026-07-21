@@ -131,6 +131,26 @@ def _add_column_if_missing(table_name, column_name, ddl):
 
 
 
+
+def repair_announcement_id_sequence():
+    """Repair PostgreSQL auto-numbering for announcements.id."""
+    if engine.dialect.name != "postgresql":
+        return True
+    with engine.begin() as conn:
+        conn.execute(text("CREATE SEQUENCE IF NOT EXISTS announcements_id_seq"))
+        conn.execute(text("ALTER SEQUENCE announcements_id_seq OWNED BY announcements.id"))
+        conn.execute(text(
+            "ALTER TABLE announcements "
+            "ALTER COLUMN id SET DEFAULT nextval('announcements_id_seq')"
+        ))
+        conn.execute(text(
+            "SELECT setval("
+            "'announcements_id_seq', "
+            "COALESCE((SELECT MAX(id) FROM announcements), 0) + 1, false)"
+        ))
+    return True
+
+
 def ensure_feature_tables():
     """
     Create and repair V9.3+ feature tables.
@@ -207,6 +227,7 @@ def ensure_feature_tables():
             "WHERE created_at IS NULL"
         ))
 
+    repair_announcement_id_sequence()
     return True
 
 
@@ -552,22 +573,28 @@ def create_announcement(title_zh, content_zh, title_en="", content_en="",
                         category="一般公告", publish_start=None, publish_end=None,
                         is_published=True):
     ensure_feature_tables()
-    with engine.begin() as conn:
-        result = conn.execute(insert(announcements).values(
-            title_zh=title_zh.strip(),
-            title_en=title_en.strip(),
-            content_zh=content_zh.strip(),
-            content_en=content_en.strip(),
-            category=category,
-            publish_start=as_date(publish_start) if publish_start else None,
-            publish_end=as_date(publish_end) if publish_end else None,
-            is_published=bool(is_published),
-            created_at=datetime.now(),
-        ))
-        announcement_id = int(result.inserted_primary_key[0])
+    values = dict(
+        title_zh=title_zh.strip(),
+        title_en=title_en.strip(),
+        content_zh=content_zh.strip(),
+        content_en=content_en.strip(),
+        category=category,
+        publish_start=as_date(publish_start) if publish_start else None,
+        publish_end=as_date(publish_end) if publish_end else None,
+        is_published=bool(is_published),
+        created_at=datetime.now(),
+    )
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(insert(announcements).values(**values))
+            announcement_id = int(result.inserted_primary_key[0])
+    except IntegrityError:
+        repair_announcement_id_sequence()
+        with engine.begin() as conn:
+            result = conn.execute(insert(announcements).values(**values))
+            announcement_id = int(result.inserted_primary_key[0])
     log_action("CREATE", "announcement", str(announcement_id), title_zh)
     return announcement_id
-
 
 def update_announcement(announcement_id, title_zh, content_zh, title_en="",
                         content_en="", category="一般公告", publish_start=None,

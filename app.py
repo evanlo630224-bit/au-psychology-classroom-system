@@ -279,7 +279,7 @@ def login_page():
         + quick("notice", "系統公告", "重要通知與公告")
         + quick("book", "使用說明", "操作手冊與指南")
         + quick("news", "最新消息", "系統更新資訊")
-        + '</div><div class="footer-note">AU-PCRS V8.5 Database Migration Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
+        + '</div><div class="footer-note">AU-PCRS V8.6 PostgreSQL Boolean Aggregate Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
         unsafe_allow_html=True,
     )
 

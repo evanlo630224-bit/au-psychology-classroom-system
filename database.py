@@ -177,22 +177,67 @@ def add_course_blocks(df,semester,replace=False):
         except IntegrityError: dup+=1
     return {"inserted":ins,"duplicates":dup,"skipped":skip}
 def get_course_semesters():
+    """
+    Return one summary row per semester.
+
+    PostgreSQL does not support MAX(boolean), so use BOOL_OR(is_active).
+    SQLite uses MAX(CAST(is_active AS INTEGER)).
+    A final Python aggregation fallback keeps the admin page available even
+    when an older database has unusual column types.
+    """
+    migrate_schema()
+
+    if engine.dialect.name == "postgresql":
+        active_aggregate = func.bool_or(course_blocks.c.is_active).label("is_active")
+    else:
+        from sqlalchemy import cast
+        active_aggregate = func.max(
+            cast(course_blocks.c.is_active, Integer)
+        ).label("is_active")
+
     stmt = (
         select(
             course_blocks.c.semester,
             func.count().label("course_count"),
-            func.max(course_blocks.c.is_active).label("is_active"),
+            active_aggregate,
         )
         .group_by(course_blocks.c.semester)
         .order_by(course_blocks.c.semester.desc())
     )
+
     try:
         with engine.connect() as conn:
-            return _rows(conn.execute(stmt))
+            result = _rows(conn.execute(stmt))
+        for row in result:
+            row["is_active"] = bool(row.get("is_active"))
+        return result
     except Exception:
-        migrate_schema()
+        # Compatibility fallback: select raw rows and aggregate in Python.
+        columns = _column_names("course_blocks")
+        if "semester" not in columns:
+            return []
+
+        selected = [course_blocks.c.semester]
+        if "is_active" in columns:
+            selected.append(course_blocks.c.is_active)
+
         with engine.connect() as conn:
-            return _rows(conn.execute(stmt))
+            raw = _rows(conn.execute(select(*selected)))
+
+        grouped = {}
+        for row in raw:
+            semester = row.get("semester") or "歷史課表"
+            item = grouped.setdefault(
+                semester,
+                {"semester": semester, "course_count": 0, "is_active": False},
+            )
+            item["course_count"] += 1
+            if "is_active" not in row or row.get("is_active") is None:
+                item["is_active"] = True
+            else:
+                item["is_active"] = item["is_active"] or bool(row.get("is_active"))
+
+        return sorted(grouped.values(), key=lambda x: x["semester"], reverse=True)
 def set_course_semester_active(semester,active):
     with engine.begin() as c:c.execute(update(course_blocks).where(course_blocks.c.semester==semester).values(is_active=bool(active)))
 def delete_course_semester(semester):

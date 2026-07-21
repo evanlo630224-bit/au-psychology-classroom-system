@@ -97,10 +97,78 @@ def style(login_mode=False):
     header[data-testid=stHeader]{{background:transparent;height:0}}
     #MainMenu,footer,[data-testid="stToolbar"],[data-testid="stDecoration"],[data-testid="stStatusWidget"],.stAppDeployButton{{display:none!important;visibility:hidden!important}}
     .block-container{{max-width:1430px;padding-top:1.25rem;padding-bottom:.9rem}}
-    [data-testid=stSidebar]{{background:linear-gradient(180deg,#2b0f7b,#4d22c7 54%,#6a3ce5);border-right:0}}
-    [data-testid=stSidebar] *{{color:white!important}}
-    [data-testid=stSidebar] [data-baseweb="select"]>div{{background:white!important;border-color:rgba(255,255,255,.5)!important}}
-    [data-testid=stSidebar] [data-baseweb="select"] span,[data-testid=stSidebar] [data-baseweb="select"] input{{color:#2c2540!important;-webkit-text-fill-color:#2c2540!important}}
+    [data-testid=stSidebar]{{background:linear-gradient(180deg,#28106f 0%,#4720bd 54%,#6638df 100%);border-right:0}}
+    [data-testid=stSidebar] h1,
+    [data-testid=stSidebar] h2,
+    [data-testid=stSidebar] h3,
+    [data-testid=stSidebar] label[data-testid="stWidgetLabel"] p,
+    [data-testid=stSidebar] [data-testid="stCaptionContainer"],
+    [data-testid=stSidebar] hr{{color:white!important}}
+    [data-testid=stSidebar] [data-testid="stImage"] img{{
+        border-radius:20px!important;
+        background:rgba(255,255,255,.96)!important;
+        padding:7px!important;
+        box-shadow:0 12px 30px rgba(20,7,70,.24)!important;
+    }}
+    [data-testid=stSidebar] [data-baseweb="select"]>div{{
+        background:#fff!important;
+        border:1px solid rgba(255,255,255,.58)!important;
+        border-radius:12px!important;
+        min-height:48px!important;
+    }}
+    [data-testid=stSidebar] [data-baseweb="select"] span,
+    [data-testid=stSidebar] [data-baseweb="select"] input,
+    [data-testid=stSidebar] [data-baseweb="select"] svg{{
+        color:#2f176e!important;
+        -webkit-text-fill-color:#2f176e!important;
+        fill:#2f176e!important;
+        font-weight:800!important;
+    }}
+    [data-testid=stSidebar] div[role="radiogroup"]{{
+        display:flex!important;
+        flex-direction:column!important;
+        gap:9px!important;
+    }}
+    [data-testid=stSidebar] div[role="radiogroup"] label{{
+        width:100%!important;
+        min-height:48px!important;
+        display:flex!important;
+        align-items:center!important;
+        background:rgba(255,255,255,.97)!important;
+        border:1px solid rgba(255,255,255,.65)!important;
+        border-radius:13px!important;
+        padding:10px 13px!important;
+        margin:0!important;
+        box-shadow:0 6px 18px rgba(25,8,82,.10)!important;
+    }}
+    [data-testid=stSidebar] div[role="radiogroup"] label p,
+    [data-testid=stSidebar] div[role="radiogroup"] label span{{
+        color:#2e176c!important;
+        -webkit-text-fill-color:#2e176c!important;
+        font-weight:800!important;
+        opacity:1!important;
+    }}
+    [data-testid=stSidebar] div[role="radiogroup"] label:has(input:checked),
+    [data-testid=stSidebar] div[role="radiogroup"] label[data-checked="true"]{{
+        background:linear-gradient(100deg,#efe9ff,#ffffff)!important;
+        border:2px solid #bba8ff!important;
+        box-shadow:0 8px 22px rgba(66,31,168,.18)!important;
+    }}
+    [data-testid=stSidebar] div[role="radiogroup"] label:has(input:checked) p,
+    [data-testid=stSidebar] div[role="radiogroup"] label:has(input:checked) span{{
+        color:#4c22bd!important;
+        -webkit-text-fill-color:#4c22bd!important;
+    }}
+    [data-testid=stSidebar] div[role="radiogroup"] input[type="radio"]{{
+        accent-color:#6337dc!important;
+    }}
+    [data-testid=stSidebar] .stButton>button{{
+        background:rgba(255,255,255,.97)!important;
+        color:#3a1a91!important;
+        border:1px solid rgba(255,255,255,.65)!important;
+        min-height:46px!important;
+        box-shadow:0 7px 18px rgba(24,7,77,.12)!important;
+    }}
     [data-baseweb="popover"] *{{color:#252536!important}}
     .topbar{{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-radius:17px;background:linear-gradient(110deg,#2e117f,#6033da);color:#fff;box-shadow:0 12px 32px rgba(55,25,145,.17);margin-bottom:18px}}
     .brand{{font-weight:850;font-size:1.02rem}}.brand span{{display:block;font-size:.72rem;font-weight:500;opacity:.82;margin-top:2px}}
@@ -211,7 +279,7 @@ def login_page():
         + quick("notice", "系統公告", "重要通知與公告")
         + quick("book", "使用說明", "操作手冊與指南")
         + quick("news", "最新消息", "系統更新資訊")
-        + '</div><div class="footer-note">AU-PCRS V8.3 Streamlit Magic Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
+        + '</div><div class="footer-note">AU-PCRS V8.4 Sidebar Visibility Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
         unsafe_allow_html=True,
     )
 
@@ -362,7 +430,7 @@ def admin_page():
             st.info("目前尚無操作紀錄")
 
 
-st.set_page_config(page_title="AU-PCRS V8.2", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V8.4", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -382,17 +450,39 @@ if st.session_state.user is None:
 
 style(login_mode=False)
 with st.sidebar:
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
     if PSY_LOGO.exists():
-        st.image(str(PSY_LOGO), width=105)
+        st.image(str(PSY_LOGO), width=92)
     st.markdown(f"### {st.session_state.user['name']}")
-    st.caption(st.session_state.user["user_type"])
-    st.session_state.language = st.selectbox("語言 / Language", ["中文", "English"], index=0 if st.session_state.language == "中文" else 1)
-    t = TXT[st.session_state.language]
-    pages = [t["home"], t["adminp"]] if st.session_state.admin else [t["home"], t["reserve"], t["query"]]
-    page = st.radio("功能選單 / Menu", pages)
+    st.caption(f"身分 / Role：{st.session_state.user['user_type']}")
     st.divider()
-    st.caption("AU-PCRS V8.3 Streamlit Magic Fix Edition")
-    if st.button(t["logout"], use_container_width=True):
+
+    selected_language = st.selectbox(
+        "語言 / Language",
+        ["中文", "English"],
+        index=0 if st.session_state.language == "中文" else 1,
+        key="sidebar_language",
+    )
+    if selected_language != st.session_state.language:
+        st.session_state.language = selected_language
+        st.rerun()
+
+    t = TXT[st.session_state.language]
+    if st.session_state.admin:
+        pages = [t["home"], t["adminp"]]
+    else:
+        pages = [t["home"], t["reserve"], t["query"]]
+
+    page = st.radio(
+        "功能選單 / Menu",
+        pages,
+        key="sidebar_page",
+    )
+
+    st.divider()
+    st.caption("AU-PCRS V8.4")
+    st.caption("Sidebar Visibility Fix Edition")
+    if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False
         st.rerun()

@@ -130,8 +130,89 @@ def _add_column_if_missing(table_name, column_name, ddl):
     return True
 
 
+
+def ensure_feature_tables():
+    """
+    Create and repair V9.3+ feature tables.
+
+    create_all() creates missing tables but does not add missing columns to
+    existing tables, so every required announcement/settings column is also
+    checked explicitly.
+    """
+    metadata.create_all(engine)
+
+    tables = set(inspect(engine).get_table_names())
+    if "announcements" not in tables or "system_settings" not in tables:
+        # Run the targeted create again with a fresh connection/inspection.
+        metadata.create_all(
+            engine,
+            tables=[announcements, system_settings, audit_logs],
+            checkfirst=True,
+        )
+        tables = set(inspect(engine).get_table_names())
+
+    missing_tables = {"announcements", "system_settings"} - tables
+    if missing_tables:
+        raise RuntimeError(
+            "Required tables could not be created: "
+            + ", ".join(sorted(missing_tables))
+        )
+
+    announcement_columns = {
+        "title_zh": "title_zh VARCHAR(255)",
+        "title_en": "title_en VARCHAR(255)",
+        "content_zh": "content_zh TEXT",
+        "content_en": "content_en TEXT",
+        "category": "category VARCHAR(50)",
+        "publish_start": "publish_start DATE",
+        "publish_end": "publish_end DATE",
+        "is_published": "is_published BOOLEAN",
+        "created_at": "created_at TIMESTAMP",
+        "updated_at": "updated_at TIMESTAMP",
+    }
+    for column_name, ddl in announcement_columns.items():
+        _add_column_if_missing("announcements", column_name, ddl)
+
+    setting_columns = {
+        "setting_value": "setting_value VARCHAR(500)",
+        "updated_at": "updated_at TIMESTAMP",
+    }
+    for column_name, ddl in setting_columns.items():
+        _add_column_if_missing("system_settings", column_name, ddl)
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE announcements "
+            "SET title_zh = '未命名公告' "
+            "WHERE title_zh IS NULL OR TRIM(title_zh) = ''"
+        ))
+        conn.execute(text(
+            "UPDATE announcements "
+            "SET content_zh = '' "
+            "WHERE content_zh IS NULL"
+        ))
+        conn.execute(text(
+            "UPDATE announcements "
+            "SET category = '一般公告' "
+            "WHERE category IS NULL OR TRIM(category) = ''"
+        ))
+        conn.execute(text(
+            "UPDATE announcements "
+            "SET is_published = TRUE "
+            "WHERE is_published IS NULL"
+        ))
+        conn.execute(text(
+            "UPDATE announcements "
+            "SET created_at = CURRENT_TIMESTAMP "
+            "WHERE created_at IS NULL"
+        ))
+
+    return True
+
+
 def migrate_schema():
     """Upgrade older SQLite/Supabase schemas without deleting existing data."""
+    ensure_feature_tables()
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
     if "course_blocks" in tables:
@@ -195,7 +276,10 @@ def migrate_schema():
 
 def init_db():
     metadata.create_all(engine)
+    ensure_feature_tables()
     migrate_schema()
+    return True
+
 def database_health_check():
     try:
         with engine.connect() as c: c.execute(text("SELECT 1"))
@@ -421,6 +505,7 @@ def get_audit_logs(limit=1000):
 
 
 def get_setting(setting_key, default=None):
+    ensure_feature_tables()
     with engine.connect() as conn:
         row = conn.execute(
             select(system_settings.c.setting_value).where(
@@ -431,6 +516,7 @@ def get_setting(setting_key, default=None):
 
 
 def set_setting(setting_key, setting_value):
+    ensure_feature_tables()
     value = str(setting_value)
     with engine.begin() as conn:
         exists = conn.execute(
@@ -465,6 +551,7 @@ def get_setting_bool(setting_key, default=False):
 def create_announcement(title_zh, content_zh, title_en="", content_en="",
                         category="一般公告", publish_start=None, publish_end=None,
                         is_published=True):
+    ensure_feature_tables()
     with engine.begin() as conn:
         result = conn.execute(insert(announcements).values(
             title_zh=title_zh.strip(),
@@ -485,6 +572,7 @@ def create_announcement(title_zh, content_zh, title_en="", content_en="",
 def update_announcement(announcement_id, title_zh, content_zh, title_en="",
                         content_en="", category="一般公告", publish_start=None,
                         publish_end=None, is_published=True):
+    ensure_feature_tables()
     with engine.begin() as conn:
         conn.execute(
             update(announcements)
@@ -505,35 +593,55 @@ def update_announcement(announcement_id, title_zh, content_zh, title_en="",
 
 
 def delete_announcement(announcement_id):
+    ensure_feature_tables()
     with engine.begin() as conn:
         conn.execute(delete(announcements).where(announcements.c.id == int(announcement_id)))
     log_action("DELETE", "announcement", str(announcement_id), "")
 
 
 def get_all_announcements():
-    with engine.connect() as conn:
-        return _rows(conn.execute(
-            select(announcements).order_by(
-                announcements.c.created_at.desc(),
-                announcements.c.id.desc(),
-            )
-        ))
-
+    stmt = select(announcements).order_by(
+        announcements.c.created_at.desc(),
+        announcements.c.id.desc(),
+    )
+    try:
+        ensure_feature_tables()
+        with engine.connect() as conn:
+            return _rows(conn.execute(stmt))
+    except Exception:
+        # Repair all feature objects and retry once.
+        metadata.create_all(engine)
+        ensure_feature_tables()
+        with engine.connect() as conn:
+            return _rows(conn.execute(stmt))
 
 def get_active_announcements(reference_date=None):
     current = as_date(reference_date or date.today())
     conditions = [
         announcements.c.is_published.is_(True),
-        (announcements.c.publish_start.is_(None) | (announcements.c.publish_start <= current)),
-        (announcements.c.publish_end.is_(None) | (announcements.c.publish_end >= current)),
+        (
+            announcements.c.publish_start.is_(None)
+            | (announcements.c.publish_start <= current)
+        ),
+        (
+            announcements.c.publish_end.is_(None)
+            | (announcements.c.publish_end >= current)
+        ),
     ]
-    with engine.connect() as conn:
-        return _rows(conn.execute(
-            select(announcements)
-            .where(and_(*conditions))
-            .order_by(announcements.c.created_at.desc(), announcements.c.id.desc())
-        ))
-
+    stmt = (
+        select(announcements)
+        .where(and_(*conditions))
+        .order_by(announcements.c.created_at.desc(), announcements.c.id.desc())
+    )
+    try:
+        ensure_feature_tables()
+        with engine.connect() as conn:
+            return _rows(conn.execute(stmt))
+    except Exception:
+        metadata.create_all(engine)
+        ensure_feature_tables()
+        with engine.connect() as conn:
+            return _rows(conn.execute(stmt))
 
 def review_booking(booking_id, decision, reviewer="Administrator", note=""):
     if decision not in {"已核准", "已退回"}:
@@ -572,10 +680,9 @@ def get_pending_bookings(limit=500):
 
 
 def initialize_database_once():
-    """Initialize schema and run migration once per process."""
-    init_db()
-    try:
-        migrate_schema()
-    except NameError:
-        pass
+    """Initialize all base and feature schemas once per Streamlit process."""
+    metadata.create_all(engine)
+    ensure_feature_tables()
+    migrate_schema()
     return True
+

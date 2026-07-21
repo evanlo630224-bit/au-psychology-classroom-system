@@ -631,7 +631,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V9.3 Announcement & Approval Workflow Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V9.4 Announcement Table Migration Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -787,7 +787,12 @@ def admin_page():
 
     if section == "公告管理":
         st.markdown("### 系統公告管理 / Announcement Management")
-        rows = cached_announcements(False)
+        try:
+            rows = cached_announcements(False)
+        except Exception as exc:
+            st.error("公告資料表初始化失敗，請重新啟動系統後再試。")
+            st.caption(str(exc))
+            return None
 
         mode = st.radio("作業", ["新增公告", "修改／刪除公告"], horizontal=True)
         categories = ["一般公告", "開放時間", "重要通知", "系統維護"]
@@ -1147,7 +1152,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V9.3", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V9.4", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1207,8 +1212,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("AU-PCRS V9.3")
-    st.caption("Announcement & Approval Workflow Edition")
+    st.caption("AU-PCRS V9.4")
+    st.caption("Announcement Table Migration Fix Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

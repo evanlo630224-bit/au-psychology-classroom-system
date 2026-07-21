@@ -211,7 +211,7 @@ def login_page():
         + quick("notice", "系統公告", "重要通知與公告")
         + quick("book", "使用說明", "操作手冊與指南")
         + quick("news", "最新消息", "系統更新資訊")
-        + '</div><div class="footer-note">AU-PCRS V8.2 Delta Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
+        + '</div><div class="footer-note">AU-PCRS V8.3 Streamlit Magic Fix Edition ｜ © 2026 亞洲大學心理學系</div>',
         unsafe_allow_html=True,
     )
 
@@ -231,7 +231,10 @@ def render_dashboard() -> None:
     else:
         st.warning("尚未設定開放借用期間")
     ok, message = database_health_check()
-    st.info(f"✅ Database：{message}") if ok else st.error(message)
+    if ok:
+        st.info(f"✅ Database：{message}")
+    else:
+        st.error(f"❌ Database：{message}")
 
 
 def reserve():
@@ -298,7 +301,7 @@ def admin_page():
     st.markdown("## 管理員後台")
     tabs = st.tabs(["儀表板", "名冊管理", "開放期間", "課表管理", "借用管理", "操作紀錄"])
     with tabs[0]:
-        render_dashboard()
+        _ = render_dashboard()
     with tabs[1]:
         user_type = st.radio("名冊類別", ["教師", "學生"], horizontal=True)
         upload = st.file_uploader("Excel：辨識碼、姓名、聯絡信箱、狀態", type=["xlsx"], key="roster")
@@ -374,7 +377,7 @@ except Exception as exc:
 
 if st.session_state.user is None:
     style(login_mode=True)
-    login_page()
+    _ = login_page()
     st.stop()
 
 style(login_mode=False)
@@ -388,7 +391,7 @@ with st.sidebar:
     pages = [t["home"], t["adminp"]] if st.session_state.admin else [t["home"], t["reserve"], t["query"]]
     page = st.radio("功能選單 / Menu", pages)
     st.divider()
-    st.caption("AU-PCRS V8.2 Delta Fix Edition")
+    st.caption("AU-PCRS V8.3 Streamlit Magic Fix Edition")
     if st.button(t["logout"], use_container_width=True):
         st.session_state.user = None
         st.session_state.admin = False
@@ -396,10 +399,10 @@ with st.sidebar:
 
 topbar(language_selector=False)
 if page == t["home"]:
-    render_dashboard()
+    _ = render_dashboard()
 elif page == t["reserve"]:
-    reserve()
+    _ = reserve()
 elif page == t["query"]:
-    query()
+    _ = query()
 else:
-    admin_page()
+    _ = admin_page()

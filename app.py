@@ -304,6 +304,45 @@ def style(login_mode=False):
     .notice-card b{{color:#3c1aa5}}.notice-card p{{margin:6px 0 0;color:#666174;line-height:1.65}}
     .footer-note{{text-align:center;color:#827e92;font-size:.72rem;margin-top:14px}}
     @media(max-width:900px){{.features,.quick-grid{{grid-template-columns:1fr}}.logo-wrap{{height:auto}}.block-container{{padding-left:1rem!important;padding-right:1rem!important}}}}
+
+    .mobile-nav-card{{
+        border:1px solid var(--b);
+        border-radius:18px;
+        background:rgba(255,255,255,.97);
+        box-shadow:0 10px 26px rgba(55,25,145,.08);
+        padding:10px 13px 6px;
+        margin:2px 0 18px;
+    }}
+    .mobile-nav-title{{
+        font-size:.78rem;
+        color:#6f6980;
+        font-weight:800;
+        margin:0 0 7px;
+    }}
+    @media(max-width:900px){{
+        .features,.quick-grid{{grid-template-columns:1fr}}
+        .logo-wrap{{height:auto}}
+        .block-container{{padding-left:1rem!important;padding-right:1rem!important;padding-top:.8rem!important}}
+        [data-testid="stSidebar"]{{display:none!important}}
+        [data-testid="collapsedControl"]{{display:none!important}}
+        .topbar{{padding:12px 16px}}
+        .brand{{font-size:.96rem}}
+        .brand span{{font-size:.69rem}}
+        div[data-testid="stRadio"] div[role="radiogroup"]{{
+            display:grid!important;
+            grid-template-columns:1fr!important;
+            gap:8px!important;
+        }}
+        div[data-testid="stRadio"] div[role="radiogroup"] label{{
+            width:100%!important;
+            margin:0!important;
+            min-height:46px!important;
+            display:flex!important;
+            align-items:center!important;
+            justify-content:flex-start!important;
+            padding:.55rem .8rem!important;
+        }}
+    }}
     {login_css}
     </style>''', unsafe_allow_html=True)
 
@@ -644,7 +683,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V9.8 Duplicate Submission Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V9.9 Mobile Navigation Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1190,7 +1229,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V9.8", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V9.9", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1219,6 +1258,13 @@ if st.session_state.user is None:
     st.stop()
 
 style(login_mode=False)
+
+t = TXT[st.session_state.language]
+if st.session_state.admin:
+    pages = [t["home"], t["adminp"]]
+else:
+    pages = [t["home"], t["reserve"], t["query"]]
+
 with st.sidebar:
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
     if PSY_LOGO.exists():
@@ -1237,27 +1283,57 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    t = TXT[st.session_state.language]
-    if st.session_state.admin:
-        pages = [t["home"], t["adminp"]]
-    else:
-        pages = [t["home"], t["reserve"], t["query"]]
-
-    page = st.radio(
-        "功能選單 / Menu",
-        pages,
-        key="sidebar_page",
-    )
-
-    st.divider()
-    st.caption("AU-PCRS V9.8")
-    st.caption("Duplicate Submission Fix Edition")
+    st.caption("AU-PCRS V9.9")
+    st.caption("Mobile Navigation Fix Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False
+        st.session_state.pop("main_page", None)
         st.rerun()
 
 topbar(language_selector=False)
+
+st.markdown(
+    '<div class="mobile-nav-card"><div class="mobile-nav-title">'
+    '功能選單 / Navigation</div></div>',
+    unsafe_allow_html=True,
+)
+
+if "main_page" not in st.session_state or st.session_state.main_page not in pages:
+    st.session_state.main_page = pages[0]
+
+page = st.radio(
+    "功能選單 / Navigation",
+    pages,
+    index=pages.index(st.session_state.main_page),
+    horizontal=True,
+    key="main_navigation_radio",
+    label_visibility="collapsed",
+)
+st.session_state.main_page = page
+
+mobile_left, mobile_right = st.columns([1.7, 1])
+with mobile_left:
+    mobile_language = st.selectbox(
+        "語言 / Language",
+        ["中文", "English"],
+        index=0 if st.session_state.language == "中文" else 1,
+        key="main_language",
+        label_visibility="collapsed",
+    )
+    if mobile_language != st.session_state.language:
+        st.session_state.language = mobile_language
+        st.rerun()
+
+with mobile_right:
+    if st.button(t["logout"], use_container_width=True, key="main_logout"):
+        st.session_state.user = None
+        st.session_state.admin = False
+        st.session_state.pop("main_page", None)
+        st.rerun()
+
+st.divider()
+
 if page == t["home"]:
     _ = render_dashboard()
 elif page == t["reserve"]:

@@ -576,7 +576,6 @@ def get_audit_logs(limit=1000):
 
 
 def get_setting(setting_key, default=None):
-    ensure_feature_tables()
     with engine.connect() as conn:
         row = conn.execute(
             select(system_settings.c.setting_value).where(
@@ -587,7 +586,6 @@ def get_setting(setting_key, default=None):
 
 
 def set_setting(setting_key, setting_value):
-    ensure_feature_tables()
     value = str(setting_value)
     with engine.begin() as conn:
         exists = conn.execute(
@@ -622,7 +620,6 @@ def get_setting_bool(setting_key, default=False):
 def create_announcement(title_zh, content_zh, title_en="", content_en="",
                         category="一般公告", publish_start=None, publish_end=None,
                         is_published=True):
-    ensure_feature_tables()
     values = dict(
         title_zh=title_zh.strip(),
         title_en=title_en.strip(),
@@ -649,7 +646,6 @@ def create_announcement(title_zh, content_zh, title_en="", content_en="",
 def update_announcement(announcement_id, title_zh, content_zh, title_en="",
                         content_en="", category="一般公告", publish_start=None,
                         publish_end=None, is_published=True):
-    ensure_feature_tables()
     with engine.begin() as conn:
         conn.execute(
             update(announcements)
@@ -670,30 +666,53 @@ def update_announcement(announcement_id, title_zh, content_zh, title_en="",
 
 
 def delete_announcement(announcement_id):
-    ensure_feature_tables()
     with engine.begin() as conn:
         conn.execute(delete(announcements).where(announcements.c.id == int(announcement_id)))
     log_action("DELETE", "announcement", str(announcement_id), "")
 
 
-def get_all_announcements():
-    stmt = select(announcements).order_by(
-        announcements.c.created_at.desc(),
-        announcements.c.id.desc(),
-    )
-    try:
-        ensure_feature_tables()
-        with engine.connect() as conn:
-            return _rows(conn.execute(stmt))
-    except Exception:
-        # Repair all feature objects and retry once.
-        metadata.create_all(engine)
-        ensure_feature_tables()
-        with engine.connect() as conn:
-            return _rows(conn.execute(stmt))
 
-def get_active_announcements(reference_date=None):
+def get_announcement_counts():
+    """Return small announcement counters without loading announcement bodies."""
+    today = date.today()
+    with engine.connect() as conn:
+        total = conn.execute(
+            select(func.count()).select_from(announcements)
+        ).scalar_one()
+        active = conn.execute(
+            select(func.count()).select_from(announcements).where(and_(
+                announcements.c.is_published.is_(True),
+                (
+                    announcements.c.publish_start.is_(None)
+                    | (announcements.c.publish_start <= today)
+                ),
+                (
+                    announcements.c.publish_end.is_(None)
+                    | (announcements.c.publish_end >= today)
+                ),
+            ))
+        ).scalar_one()
+    return {"total": int(total), "active": int(active)}
+
+
+def get_all_announcements(limit=500):
+    """Fast read-only query for the administrator announcement list."""
+    safe_limit = max(1, min(int(limit), 2000))
+    stmt = (
+        select(announcements)
+        .order_by(
+            announcements.c.created_at.desc(),
+            announcements.c.id.desc(),
+        )
+        .limit(safe_limit)
+    )
+    with engine.connect() as conn:
+        return _rows(conn.execute(stmt))
+
+def get_active_announcements(reference_date=None, limit=100):
+    """Fast read-only query for currently published announcements."""
     current = as_date(reference_date or date.today())
+    safe_limit = max(1, min(int(limit), 500))
     conditions = [
         announcements.c.is_published.is_(True),
         (
@@ -708,17 +727,14 @@ def get_active_announcements(reference_date=None):
     stmt = (
         select(announcements)
         .where(and_(*conditions))
-        .order_by(announcements.c.created_at.desc(), announcements.c.id.desc())
+        .order_by(
+            announcements.c.created_at.desc(),
+            announcements.c.id.desc(),
+        )
+        .limit(safe_limit)
     )
-    try:
-        ensure_feature_tables()
-        with engine.connect() as conn:
-            return _rows(conn.execute(stmt))
-    except Exception:
-        metadata.create_all(engine)
-        ensure_feature_tables()
-        with engine.connect() as conn:
-            return _rows(conn.execute(stmt))
+    with engine.connect() as conn:
+        return _rows(conn.execute(stmt))
 
 def review_booking(booking_id, decision, reviewer="Administrator", note=""):
     if decision not in {"已核准", "已退回"}:
@@ -757,7 +773,12 @@ def get_pending_bookings(limit=500):
 
 
 def initialize_database_once():
-    """Initialize all base and feature schemas once per Streamlit process."""
+    """
+    Initialize and migrate once per Streamlit process.
+
+    Expensive schema inspection, sequence repair, and legacy migration are
+    intentionally restricted to startup rather than every announcement read.
+    """
     metadata.create_all(engine)
     ensure_feature_tables()
     migrate_schema()

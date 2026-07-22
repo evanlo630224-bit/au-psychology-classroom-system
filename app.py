@@ -397,9 +397,16 @@ def cached_audit_logs(limit=300):
     return get_audit_logs(limit)
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def cached_announcements(active_only=True):
-    return get_active_announcements() if active_only else get_all_announcements()
+    if active_only:
+        return get_active_announcements(limit=100)
+    return get_all_announcements(limit=500)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def cached_announcement_counts():
+    return get_announcement_counts()
 
 
 @st.cache_data(ttl=15, show_spinner=False)
@@ -414,6 +421,12 @@ def cached_auto_approve_setting():
 
 def clear_data_cache():
     st.cache_data.clear()
+
+
+def clear_announcement_cache():
+    """Clear only announcement-related cached functions."""
+    cached_announcements.clear()
+    cached_announcement_counts.clear()
 
 
 def render_public_schedule():
@@ -631,7 +644,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V9.6 Announcement Clean Table Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V9.7 Announcement Performance Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -787,11 +800,15 @@ def admin_page():
 
     if section == "公告管理":
         st.markdown("### 系統公告管理 / Announcement Management")
+        counts = cached_announcement_counts()
+        c1, c2 = st.columns(2)
+        c1.metric("公告總數", counts["total"])
+        c2.metric("目前發布中", counts["active"])
+
         try:
             rows = cached_announcements(False)
-        except Exception as exc:
-            st.error("公告資料表初始化失敗，請重新啟動系統後再試。")
-            st.caption(str(exc))
+        except Exception:
+            st.error("公告資料讀取失敗，請重新啟動系統後再試。")
             return None
 
         mode = st.radio("作業", ["新增公告", "修改／刪除公告"], horizontal=True)
@@ -826,7 +843,7 @@ def admin_page():
                             title_zh, content_zh, title_en, content_en,
                             category, publish_start, publish_end, is_published,
                         )
-                        clear_data_cache()
+                        clear_announcement_cache()
                         st.success(f"公告已新增，編號：{announcement_id}")
                         st.rerun()
                     except Exception as exc:
@@ -888,7 +905,7 @@ def admin_page():
                         selected_id, title_zh, content_zh, title_en, content_en,
                         category, publish_start, publish_end, is_published,
                     )
-                    clear_data_cache()
+                    clear_announcement_cache()
                     st.success("公告已更新。")
                     st.rerun()
 
@@ -898,7 +915,7 @@ def admin_page():
                     st.error("請先勾選刪除確認。")
                 else:
                     delete_announcement(selected_id)
-                    clear_data_cache()
+                    clear_announcement_cache()
                     st.warning("公告已刪除。")
                     st.rerun()
 
@@ -1156,7 +1173,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V9.6", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V9.7", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1216,8 +1233,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("AU-PCRS V9.6")
-    st.caption("Announcement Clean Table Fix Edition")
+    st.caption("AU-PCRS V9.7")
+    st.caption("Announcement Performance Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

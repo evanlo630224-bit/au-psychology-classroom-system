@@ -368,35 +368,61 @@ def _set_public_page(page_name, message=""):
     st.rerun()
 
 
-def _availability_rows(query_date, query_room, language=None):
-    language = language or st.session_state.get("language", "中文")
-    p = PORTAL_TEXT[language]
-    courses = get_course_blocks(str(query_date), query_room)
+def _availability_rows(query_date, query_room, language):
+    course_blocks = get_course_blocks_for_date(str(query_date), query_room)
     bookings = get_bookings_by_date_room(
         str(query_date),
         query_room,
         status=None,
     )
-    output = []
+
+    result = []
     for start_time, end_time in SLOTS:
-        status, detail = p["available"], ""
-        for course in courses:
-            if start_time < str(course["end_time"])[:5] and end_time > str(course["start_time"])[:5]:
-                status = p["course"]
-                detail = course.get("course_name", "")
-                if course.get("teacher"): detail += f" | {course['teacher']}"
+        status_zh = "可借用"
+        status_en = "Available"
+        detail = ""
+
+        # Formal course schedules have the highest priority.
+        for item in course_blocks:
+            course_start = str(item["start_time"])[:5]
+            course_end = str(item["end_time"])[:5]
+            if start_time < course_end and end_time > course_start:
+                status_zh = "課程使用中"
+                status_en = "Class Scheduled"
+                detail = item.get("course_name") or "正式課程"
                 break
-        if status == p["available"]:
-            for booking in bookings:
-                if start_time < str(booking["end_time"])[:5] and end_time > str(booking["start_time"])[:5]:
-                    status, detail = p["reserved"], booking.get("reason", "")
+
+        # Only check reservations if no course occupies the slot.
+        if status_zh == "可借用":
+            for item in bookings:
+                booking_start = str(item["start_time"])[:5]
+                booking_end = str(item["end_time"])[:5]
+                if start_time < booking_end and end_time > booking_start:
+                    booking_status = item.get("status")
+
+                    if booking_status == "待審核":
+                        status_zh = "借用審核中"
+                        status_en = "Pending Review"
+                        detail = "申請已送出，等待管理員審核"
+                    elif booking_status == "已核准":
+                        status_zh = "已借用"
+                        status_en = "Reserved"
+                        detail = item.get("reason") or "教室借用"
+                    else:
+                        # 已退回、已取消或其他非有效狀態不占用時段。
+                        continue
                     break
-        output.append({p["time_col"]: f"{start_time}–{end_time}", p["status_col"]: status, p["detail_col"]: detail})
-    return output
+
+        result.append({
+            "時間" if language == "中文" else "Time": f"{start_time}–{end_time}",
+            "狀態" if language == "中文" else "Status":
+                status_zh if language == "中文" else status_en,
+            "說明" if language == "中文" else "Details": detail,
+        })
+
+    return result
 
 
-
-@st.cache_resource(show_spinner=False)
 def cached_initialize_database():
     return initialize_database_once()
 
@@ -683,7 +709,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V9.9 Mobile Navigation Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.0 Review Status Display Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1229,7 +1255,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V9.9", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.0", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1283,8 +1309,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V9.9")
-    st.caption("Mobile Navigation Fix Edition")
+    st.caption("AU-PCRS V10.0")
+    st.caption("Review Status Display Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

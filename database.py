@@ -66,7 +66,7 @@ audit_logs = Table("audit_logs", metadata,
     Column("target_type", String(50), nullable=False), Column("target_id", String(100)),
     Column("detail", Text), Column("created_at", DateTime, default=datetime.now))
 
-announcements = Table("announcements", metadata,
+announcements = Table("system_announcements", metadata,
     Column("id", Integer, primary_key=True),
     Column("title_zh", String(255), nullable=False),
     Column("title_en", String(255)),
@@ -133,22 +133,71 @@ def _add_column_if_missing(table_name, column_name, ddl):
 
 
 def repair_announcement_id_sequence():
-    """Repair PostgreSQL auto-numbering for announcements.id."""
+    """Repair PostgreSQL auto-numbering for system_announcements.id."""
     if engine.dialect.name != "postgresql":
         return True
     with engine.begin() as conn:
-        conn.execute(text("CREATE SEQUENCE IF NOT EXISTS announcements_id_seq"))
-        conn.execute(text("ALTER SEQUENCE announcements_id_seq OWNED BY announcements.id"))
+        conn.execute(text("CREATE SEQUENCE IF NOT EXISTS system_announcements_id_seq"))
+        conn.execute(text("ALTER SEQUENCE system_announcements_id_seq OWNED BY system_announcements.id"))
         conn.execute(text(
-            "ALTER TABLE announcements "
-            "ALTER COLUMN id SET DEFAULT nextval('announcements_id_seq')"
+            "ALTER TABLE system_announcements "
+            "ALTER COLUMN id SET DEFAULT nextval('system_announcements_id_seq')"
         ))
         conn.execute(text(
             "SELECT setval("
-            "'announcements_id_seq', "
-            "COALESCE((SELECT MAX(id) FROM announcements), 0) + 1, false)"
+            "'system_announcements_id_seq', "
+            "COALESCE((SELECT MAX(id) FROM system_announcements), 0) + 1, false)"
         ))
     return True
+
+
+
+def migrate_legacy_announcements():
+    """
+    Best-effort migration from older `announcements` table into the clean
+    `system_announcements` table. It never blocks startup.
+    """
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "announcements" not in tables or "system_announcements" not in tables:
+        return 0
+
+    legacy_columns = {col["name"] for col in inspector.get_columns("system_announcements")}
+    required = {"title_zh", "content_zh"}
+    if not required.issubset(legacy_columns):
+        return 0
+
+    select_columns = [
+        "title_zh",
+        "content_zh",
+        "title_en" if "title_en" in legacy_columns else "NULL AS title_en",
+        "content_en" if "content_en" in legacy_columns else "NULL AS content_en",
+        "category" if "category" in legacy_columns else "'一般公告' AS category",
+        "publish_start" if "publish_start" in legacy_columns else "NULL AS publish_start",
+        "publish_end" if "publish_end" in legacy_columns else "NULL AS publish_end",
+        "is_published" if "is_published" in legacy_columns else "TRUE AS is_published",
+        "created_at" if "created_at" in legacy_columns else "CURRENT_TIMESTAMP AS created_at",
+        "updated_at" if "updated_at" in legacy_columns else "NULL AS updated_at",
+    ]
+
+    try:
+        with engine.begin() as conn:
+            existing_count = conn.execute(
+                text("SELECT COUNT(*) FROM system_announcements")
+            ).scalar_one()
+            if existing_count:
+                return 0
+
+            sql = (
+                "INSERT INTO system_announcements "
+                "(title_zh,title_en,content_zh,content_en,category,"
+                "publish_start,publish_end,is_published,created_at,updated_at) "
+                "SELECT " + ",".join(select_columns) + " FROM announcements"
+            )
+            result = conn.execute(text(sql))
+            return result.rowcount or 0
+    except Exception:
+        return 0
 
 
 def ensure_feature_tables():
@@ -162,7 +211,7 @@ def ensure_feature_tables():
     metadata.create_all(engine)
 
     tables = set(inspect(engine).get_table_names())
-    if "announcements" not in tables or "system_settings" not in tables:
+    if "system_announcements" not in tables or "system_settings" not in tables:
         # Run the targeted create again with a fresh connection/inspection.
         metadata.create_all(
             engine,
@@ -171,7 +220,7 @@ def ensure_feature_tables():
         )
         tables = set(inspect(engine).get_table_names())
 
-    missing_tables = {"announcements", "system_settings"} - tables
+    missing_tables = {"system_announcements", "system_settings"} - tables
     if missing_tables:
         raise RuntimeError(
             "Required tables could not be created: "
@@ -191,7 +240,7 @@ def ensure_feature_tables():
         "updated_at": "updated_at TIMESTAMP",
     }
     for column_name, ddl in announcement_columns.items():
-        _add_column_if_missing("announcements", column_name, ddl)
+        _add_column_if_missing("system_announcements", column_name, ddl)
 
     setting_columns = {
         "setting_value": "setting_value VARCHAR(500)",
@@ -202,32 +251,33 @@ def ensure_feature_tables():
 
     with engine.begin() as conn:
         conn.execute(text(
-            "UPDATE announcements "
+            "UPDATE system_announcements "
             "SET title_zh = '未命名公告' "
             "WHERE title_zh IS NULL OR TRIM(title_zh) = ''"
         ))
         conn.execute(text(
-            "UPDATE announcements "
+            "UPDATE system_announcements "
             "SET content_zh = '' "
             "WHERE content_zh IS NULL"
         ))
         conn.execute(text(
-            "UPDATE announcements "
+            "UPDATE system_announcements "
             "SET category = '一般公告' "
             "WHERE category IS NULL OR TRIM(category) = ''"
         ))
         conn.execute(text(
-            "UPDATE announcements "
+            "UPDATE system_announcements "
             "SET is_published = TRUE "
             "WHERE is_published IS NULL"
         ))
         conn.execute(text(
-            "UPDATE announcements "
+            "UPDATE system_announcements "
             "SET created_at = CURRENT_TIMESTAMP "
             "WHERE created_at IS NULL"
         ))
 
     repair_announcement_id_sequence()
+    migrate_legacy_announcements()
     return True
 
 
@@ -277,7 +327,7 @@ def migrate_schema():
             conn.execute(text("UPDATE bookings SET status = '已核准' WHERE status = '有效'"))
             conn.execute(text("UPDATE bookings SET approval_mode = '歷史資料' WHERE approval_mode IS NULL AND status = '已核准'"))
 
-    if "announcements" in tables:
+    if "system_announcements" in tables:
         for name, ddl in [
             ("title_en", 'title_en VARCHAR(255)'),
             ("content_en", 'content_en TEXT'),
@@ -288,11 +338,11 @@ def migrate_schema():
             ("created_at", 'created_at TIMESTAMP'),
             ("updated_at", 'updated_at TIMESTAMP'),
         ]:
-            _add_column_if_missing("announcements", name, ddl)
+            _add_column_if_missing("system_announcements", name, ddl)
         with engine.begin() as conn:
-            conn.execute(text("UPDATE announcements SET category = '一般公告' WHERE category IS NULL OR TRIM(category) = ''"))
-            conn.execute(text("UPDATE announcements SET is_published = TRUE WHERE is_published IS NULL"))
-            conn.execute(text("UPDATE announcements SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+            conn.execute(text("UPDATE system_announcements SET category = '一般公告' WHERE category IS NULL OR TRIM(category) = ''"))
+            conn.execute(text("UPDATE system_announcements SET is_published = TRUE WHERE is_published IS NULL"))
+            conn.execute(text("UPDATE system_announcements SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
 
 
 def init_db():

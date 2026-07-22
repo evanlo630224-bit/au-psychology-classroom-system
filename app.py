@@ -631,7 +631,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V9.5 Announcement ID Sequence Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V9.6 Announcement Clean Table Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -830,7 +830,7 @@ def admin_page():
                         st.success(f"公告已新增，編號：{announcement_id}")
                         st.rerun()
                     except Exception as exc:
-                        st.error("公告新增失敗，系統已嘗試修復公告編號。")
+                        st.error("公告新增失敗，請確認資料內容後再試；系統已使用新版公告資料表。")
                         st.caption(str(exc))
         else:
             if not rows:
@@ -1156,7 +1156,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V9.5", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V9.6", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1216,8 +1216,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("AU-PCRS V9.5")
-    st.caption("Announcement ID Sequence Fix Edition")
+    st.caption("AU-PCRS V9.6")
+    st.caption("Announcement Clean Table Fix Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

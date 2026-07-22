@@ -482,6 +482,26 @@ def check_booking_conflict(booking_date,room,start_time,end_time,exclude_booking
     if exclude_booking_id:cond.append(bookings.c.booking_id!=exclude_booking_id)
     with engine.connect() as c:r=c.execute(select(bookings.c.booking_id).where(and_(*cond)).limit(1)).first()
     return {"type":"booking","detail":r._mapping["booking_id"]} if r else None
+def find_existing_booking(booking_date, room, start_time, end_time, identification_code):
+    """Find an identical active application from the same applicant."""
+    conditions = [
+        bookings.c.booking_date == _date(booking_date),
+        bookings.c.room == room,
+        bookings.c.start_time == _time(start_time),
+        bookings.c.end_time == _time(end_time),
+        bookings.c.identification_code == str(identification_code).strip(),
+        bookings.c.status.in_(["待審核", "已核准"]),
+    ]
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(bookings)
+            .where(and_(*conditions))
+            .order_by(bookings.c.id.desc())
+            .limit(1)
+        ).first()
+    return dict(row._mapping) if row else None
+
+
 def create_booking(booking_date, room, start_time, end_time, applicant_type,
                    applicant_name, identification_code, phone, email, reason):
     auto_approve = get_setting_bool("auto_approve_bookings", False)

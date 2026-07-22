@@ -644,7 +644,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V9.7 Announcement Performance Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V9.8 Duplicate Submission Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -674,6 +674,21 @@ def reserve():
     lang = st.session_state.language
     is_english = lang == "English"
     earliest_date = date.today() + timedelta(days=3)
+
+    receipt = st.session_state.pop("booking_receipt", None)
+    if receipt:
+        if receipt["status"] == "已核准":
+            st.success(
+                f"Application approved. Reservation No.: {receipt['booking_id']}"
+                if is_english else
+                f"申請已成功核准，借用編號：{receipt['booking_id']}"
+            )
+        else:
+            st.success(
+                f"Application submitted and pending review. Application No.: {receipt['booking_id']}"
+                if is_english else
+                f"申請已成功送出，待管理員審核。申請編號：{receipt['booking_id']}"
+            )
 
     st.markdown("## Reserve a Classroom" if is_english else "## 我要借教室 / Reserve")
     st.info(
@@ -735,6 +750,16 @@ def reserve():
 
         conflict = check_booking_conflict(str(booking_date), room, start_time, end_time)
         if conflict:
+            existing = find_existing_booking(
+                str(booking_date), room, start_time, end_time,
+                user["identification_code"],
+            )
+            if existing:
+                st.session_state["booking_receipt"] = {
+                    "booking_id": existing["booking_id"],
+                    "status": existing["status"],
+                }
+                st.rerun()
             st.error(
                 f"Time conflict: {conflict['detail']}"
                 if is_english else
@@ -755,19 +780,11 @@ def reserve():
             reason,
         )
         clear_data_cache()
-
-        if booking_status == "已核准":
-            st.success(
-                f"Application approved automatically. Reservation No.: {booking_id}"
-                if is_english else
-                f"申請已自動核准，借用編號：{booking_id}"
-            )
-        else:
-            st.success(
-                f"Application submitted and pending administrator review. Application No.: {booking_id}"
-                if is_english else
-                f"申請已送出，待管理員審核。申請編號：{booking_id}"
-            )
+        st.session_state["booking_receipt"] = {
+            "booking_id": booking_id,
+            "status": booking_status,
+        }
+        st.rerun()
 
 
 def query():
@@ -1173,7 +1190,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V9.7", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V9.8", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1233,8 +1250,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("AU-PCRS V9.7")
-    st.caption("Announcement Performance Edition")
+    st.caption("AU-PCRS V9.8")
+    st.caption("Duplicate Submission Fix Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

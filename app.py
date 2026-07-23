@@ -343,6 +343,14 @@ def style(login_mode=False):
             padding:.55rem .8rem!important;
         }}
     }}
+
+    @media(max-width:900px){{
+        h1{{font-size:2rem!important;line-height:1.15!important}}
+        h2{{font-size:1.65rem!important;line-height:1.2!important}}
+        [data-testid="stMetric"]{{padding:.65rem!important}}
+        [data-testid="stMetricValue"]{{font-size:2rem!important}}
+        .block-container{{padding-top:.5rem!important}}
+    }}
     {login_css}
     </style>''', unsafe_allow_html=True)
 
@@ -423,8 +431,14 @@ def _availability_rows(query_date, query_room, language):
     return result
 
 
+@st.cache_resource(show_spinner=False)
 def cached_initialize_database():
     return initialize_database_once()
+
+
+@st.cache_resource(show_spinner=False)
+def cached_ensure_admin_schema():
+    return ensure_admin_schema_once()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -709,29 +723,53 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.0 Review Status Display Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.1 Mobile Startup Performance Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
+
 def render_dashboard() -> None:
-    """Render the dashboard directly. Do not wrap this call in st.write()."""
-    st.markdown("## 智慧儀表板 / Dashboard")
-    counts = cached_dashboard_counts()
-    a, b, c, d = st.columns(4)
-    a.metric("教師 Faculty", counts["teachers"])
-    b.metric("學生 Students", counts["students"])
-    c.metric("進行中借用 Active", counts["active_bookings"])
-    d.metric("專業教室 Rooms", len(ROOMS))
+    """Mobile-first dashboard with optional statistics."""
+    lang = st.session_state.language
+    is_english = lang == "English"
+
+    st.markdown("## Smart Dashboard" if is_english else "## 智慧儀表板 / Dashboard")
+    st.info(
+        "Use the function menu to reserve or check a classroom. "
+        "Statistics are loaded only when requested."
+        if is_english else
+        "請使用功能選單進行教室借用或查詢。為縮短手機等待時間，統計資料改為需要時再載入。"
+    )
+
     period = cached_active_period()
     if period:
-        st.success(f"目前開放：{period['semester']}｜{period['start_date']}～{period['end_date']}")
-    else:
-        st.warning("尚未設定開放借用期間")
-    ok, message = cached_database_health()
-    if ok:
-        st.info(f"✅ Database：{message}")
-    else:
-        st.error(f"❌ Database：{message}")
+        st.success(
+            f'Current semester: {period["semester"]} | {period["start_date"]} – {period["end_date"]}'
+            if is_english else
+            f'目前開放：{period["semester"]}｜{period["start_date"]}～{period["end_date"]}'
+        )
+
+    load_stats = st.toggle(
+        "Load dashboard statistics" if is_english else "載入儀表板統計資料",
+        value=False,
+        key="load_dashboard_stats",
+    )
+    if not load_stats:
+        return None
+
+    with st.spinner("Loading..." if is_english else "正在載入統計資料…"):
+        counts = cached_dashboard_counts()
+
+    a, b = st.columns(2)
+    a.metric("Faculty" if is_english else "教師 Faculty", counts["teachers"])
+    b.metric("Students" if is_english else "學生 Students", counts["students"])
+    c, d = st.columns(2)
+    c.metric(
+        "Active Reservations" if is_english else "進行中借用 Active",
+        counts["active_bookings"],
+    )
+    d.metric("Rooms" if is_english else "專業教室 Rooms", len(ROOMS))
+    return None
 
 
 def reserve():
@@ -867,6 +905,12 @@ def query():
 
 
 def admin_page():
+    try:
+        cached_ensure_admin_schema()
+    except Exception:
+        st.error("管理功能初始化失敗，請稍後重新整理。")
+        return None
+
     st.markdown("## 管理員後台 / Administration")
 
     section = st.radio(
@@ -1255,7 +1299,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.0", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.1", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1309,8 +1353,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.0")
-    st.caption("Review Status Display Edition")
+    st.caption("AU-PCRS V10.1")
+    st.caption("Mobile Startup Performance Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False
@@ -1319,39 +1363,28 @@ with st.sidebar:
 
 topbar(language_selector=False)
 
-st.markdown(
-    '<div class="mobile-nav-card"><div class="mobile-nav-title">'
-    '功能選單 / Navigation</div></div>',
-    unsafe_allow_html=True,
-)
-
 if "main_page" not in st.session_state or st.session_state.main_page not in pages:
     st.session_state.main_page = pages[0]
 
-page = st.radio(
+page = st.selectbox(
     "功能選單 / Navigation",
     pages,
     index=pages.index(st.session_state.main_page),
-    horizontal=True,
-    key="main_navigation_radio",
-    label_visibility="collapsed",
+    key="main_navigation_select",
 )
 st.session_state.main_page = page
 
-mobile_left, mobile_right = st.columns([1.7, 1])
-with mobile_left:
+with st.expander("帳號與語言 / Account & Language", expanded=False):
     mobile_language = st.selectbox(
         "語言 / Language",
         ["中文", "English"],
         index=0 if st.session_state.language == "中文" else 1,
         key="main_language",
-        label_visibility="collapsed",
     )
     if mobile_language != st.session_state.language:
         st.session_state.language = mobile_language
         st.rerun()
 
-with mobile_right:
     if st.button(t["logout"], use_container_width=True, key="main_logout"):
         st.session_state.user = None
         st.session_state.admin = False

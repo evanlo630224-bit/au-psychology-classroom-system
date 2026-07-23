@@ -351,6 +351,14 @@ def init_db():
     migrate_schema()
     return True
 
+
+def ensure_admin_schema_once():
+    """Run expensive schema checks only when the admin panel is opened."""
+    ensure_feature_tables()
+    migrate_schema()
+    return True
+
+
 def database_health_check():
     try:
         with engine.connect() as c: c.execute(text("SELECT 1"))
@@ -793,14 +801,7 @@ def get_pending_bookings(limit=500):
 
 
 def initialize_database_once():
-    """
-    Initialize and migrate once per Streamlit process.
-
-    Expensive schema inspection, sequence repair, and legacy migration are
-    intentionally restricted to startup rather than every announcement read.
-    """
+    """Fast startup: create missing tables without full legacy migration."""
     metadata.create_all(engine)
-    ensure_feature_tables()
-    migrate_schema()
     return True
 

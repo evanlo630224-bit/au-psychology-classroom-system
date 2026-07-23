@@ -377,7 +377,7 @@ def _set_public_page(page_name, message=""):
 
 
 def _availability_rows(query_date, query_room, language="中文"):
-    course_blocks = get_course_blocks_for_date(str(query_date), query_room)
+    course_blocks = get_course_blocks(str(query_date), query_room)
     bookings = get_bookings_by_date_room(
         str(query_date),
         query_room,
@@ -723,7 +723,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.2 Availability Language Parameter Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.3 Course Query Function Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1299,7 +1299,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.2", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.3", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1353,8 +1353,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.2")
-    st.caption("Availability Language Parameter Fix Edition")
+    st.caption("AU-PCRS V10.3")
+    st.caption("Course Query Function Fix Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

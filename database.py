@@ -482,6 +482,12 @@ def get_course_blocks(booking_date,room,semester=None):
     cond=[course_blocks.c.room==room,course_blocks.c.weekday==d.weekday(),course_blocks.c.is_active.is_(True)]
     if semester:cond.append(course_blocks.c.semester==semester)
     with engine.connect() as c:return _rows(c.execute(select(course_blocks).where(and_(*cond)).order_by(course_blocks.c.start_time)))
+
+def get_course_blocks_for_date(booking_date, room, semester=None):
+    """Backward-compatible alias for course lookup by date and room."""
+    return get_course_blocks(booking_date, room, semester)
+
+
 def check_booking_conflict(booking_date,room,start_time,end_time,exclude_booking_id=None):
     s,e=_time(start_time),_time(end_time)
     for x in get_course_blocks(booking_date,room):

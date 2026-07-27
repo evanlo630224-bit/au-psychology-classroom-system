@@ -1,8 +1,11 @@
 import base64
 import io
 import os
+import smtplib
+import ssl
 import re
 from datetime import date, datetime, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 
 import pandas as pd
@@ -25,6 +28,7 @@ TXT = {
     "中文": {
         "faculty": "教師", "student": "學生", "admin": "管理員",
         "home": "首頁", "reserve": "我要借教室", "query": "教室查詢",
+        "myres": "我的借用紀錄",
         "adminp": "管理員後台", "logout": "登出",
     },
     "English": {
@@ -431,6 +435,106 @@ def _availability_rows(query_date, query_room, language="中文"):
     return result
 
 
+
+def _secret_value(key, default=""):
+    try:
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return str(os.getenv(key, default))
+
+
+def email_notification_enabled():
+    return _secret_value("EMAIL_ENABLED", "false").strip().lower() in {"1","true","yes","on"}
+
+
+def send_system_email(recipient, subject, body):
+    if not recipient or not valid_email(recipient):
+        return False, "申請者未提供有效電子郵件。"
+    if not email_notification_enabled():
+        return False, "電子郵件通知尚未啟用。"
+
+    host = _secret_value("EMAIL_SMTP_HOST", "smtp.gmail.com")
+    port = int(_secret_value("EMAIL_SMTP_PORT", "587"))
+    username = _secret_value("EMAIL_USERNAME")
+    password = _secret_value("EMAIL_PASSWORD")
+    sender = _secret_value("EMAIL_FROM", username)
+    sender_name = _secret_value("EMAIL_FROM_NAME", "亞洲大學心理學系專業教室借用系統")
+    use_ssl = _secret_value("EMAIL_USE_SSL", "false").lower() in {"1","true","yes","on"}
+
+    msg = EmailMessage()
+    msg["From"] = f"{sender_name} <{sender}>"
+    msg["To"] = recipient
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    try:
+        context = ssl.create_default_context()
+        if use_ssl:
+            with smtplib.SMTP_SSL(host, port, context=context, timeout=20) as smtp:
+                if username:
+                    smtp.login(username, password)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=20) as smtp:
+                smtp.ehlo()
+                smtp.starttls(context=context)
+                smtp.ehlo()
+                if username:
+                    smtp.login(username, password)
+                smtp.send_message(msg)
+        return True, "電子郵件已寄出。"
+    except Exception as exc:
+        return False, f"電子郵件寄送失敗：{exc}"
+
+
+def build_review_email(booking, decision, review_note=""):
+    approved = decision == "已核准"
+    subject = (
+        f"【AU-PCRS】教室借用申請已核准／Reservation Approved ({booking['booking_id']})"
+        if approved else
+        f"【AU-PCRS】教室借用申請未核准／Reservation Not Approved ({booking['booking_id']})"
+    )
+    zh = "已核准" if approved else "未核准／已退回"
+    en = "Approved" if approved else "Not Approved / Returned"
+    note = review_note.strip() or "無／None"
+    body = f"""您好 {booking['applicant_name']}：
+
+您的專業教室借用申請審查結果如下：
+申請編號：{booking['booking_id']}
+審查結果：{zh}
+借用日期：{booking['booking_date']}
+借用教室：{booking['room']}
+借用時間：{str(booking['start_time'])[:5]}–{str(booking['end_time'])[:5]}
+借用事由：{booking['reason']}
+審核備註：{note}
+
+Dear {booking['applicant_name']},
+
+Application No.: {booking['booking_id']}
+Review Result: {en}
+Date: {booking['booking_date']}
+Room: {booking['room']}
+Time: {str(booking['start_time'])[:5]}–{str(booking['end_time'])[:5]}
+Purpose: {booking['reason']}
+Review Note: {note}
+
+亞洲大學心理學系
+Department of Psychology, Asia University
+AU-PCRS
+"""
+    return subject, body
+
+
+def notify_booking_review(booking_id, decision, review_note=""):
+    booking = get_booking_by_id(booking_id)
+    if not booking:
+        return False, "找不到借用申請資料。"
+    subject, body = build_review_email(booking, decision, review_note)
+    return send_system_email(booking.get("email"), subject, body)
+
+
 @st.cache_resource(show_spinner=False)
 def cached_initialize_database():
     return initialize_database_once()
@@ -469,6 +573,16 @@ def cached_authorized_users():
 @st.cache_data(ttl=30, show_spinner=False)
 def cached_recent_bookings(limit=300):
     return get_recent_bookings(limit)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_my_bookings(identification_code, limit=500):
+    return get_bookings_by_applicant(identification_code, limit)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_my_booking_counts(identification_code):
+    return get_applicant_booking_counts(identification_code)
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -723,7 +837,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.3 Course Query Function Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.5 My Reservations Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -888,6 +1002,182 @@ def reserve():
             "status": booking_status,
         }
         st.rerun()
+
+
+
+def my_reservations():
+    user = st.session_state.user
+    lang = st.session_state.language
+    is_english = lang == "English"
+    identification_code = user.get("identification_code")
+
+    st.markdown(
+        "## My Reservations"
+        if is_english else
+        "## 我的借用紀錄 / My Reservations"
+    )
+    st.caption(
+        f"Applicant: {user['name']}｜ID: {identification_code}"
+        if is_english else
+        f"申請人：{user['name']}｜識別碼：{identification_code}"
+    )
+
+    counts = cached_my_booking_counts(identification_code)
+    c1, c2 = st.columns(2)
+    c1.metric("Pending Review" if is_english else "待審核", counts["pending"])
+    c2.metric("Approved" if is_english else "已核准", counts["approved"])
+    c3, c4 = st.columns(2)
+    c3.metric("Returned" if is_english else "已退回", counts["returned"])
+    c4.metric("Cancelled" if is_english else "已取消", counts["cancelled"])
+
+    rows = cached_my_bookings(identification_code, 500)
+    if not rows:
+        st.info(
+            "No reservation records were found."
+            if is_english else
+            "目前查無個人借用紀錄。"
+        )
+        return None
+
+    status_options = (
+        ["All", "Pending Review", "Approved", "Returned", "Cancelled"]
+        if is_english else
+        ["全部", "待審核", "已核准", "已退回", "已取消"]
+    )
+    selected_status = st.selectbox(
+        "Status" if is_english else "狀態篩選",
+        status_options,
+        key="my_booking_status_filter",
+    )
+
+    date_filter = st.radio(
+        "Date Range" if is_english else "日期範圍",
+        (
+            ["All", "Upcoming", "Past"]
+            if is_english else
+            ["全部", "未來借用", "過去紀錄"]
+        ),
+        horizontal=True,
+        key="my_booking_date_filter",
+    )
+
+    status_map = {
+        "Pending Review": "待審核",
+        "Approved": "已核准",
+        "Returned": "已退回",
+        "Cancelled": "已取消",
+    }
+    selected_db_status = status_map.get(selected_status, selected_status)
+
+    filtered = []
+    today = date.today()
+    for item in rows:
+        item_date = item.get("booking_date")
+        if isinstance(item_date, str):
+            try:
+                item_date = date.fromisoformat(item_date[:10])
+            except Exception:
+                item_date = None
+
+        if selected_status not in {"全部", "All"}:
+            if item.get("status") != selected_db_status:
+                continue
+
+        if date_filter in {"未來借用", "Upcoming"}:
+            if not item_date or item_date < today:
+                continue
+        elif date_filter in {"過去紀錄", "Past"}:
+            if not item_date or item_date >= today:
+                continue
+
+        filtered.append(item)
+
+    if not filtered:
+        st.info(
+            "No records match the selected filters."
+            if is_english else
+            "目前沒有符合篩選條件的紀錄。"
+        )
+        return None
+
+    display_rows = []
+    status_label = {
+        "待審核": "借用審核中" if not is_english else "Pending Review",
+        "已核准": "已借用" if not is_english else "Reserved",
+        "已退回": "已退回" if not is_english else "Returned",
+        "已取消": "已取消" if not is_english else "Cancelled",
+    }
+
+    for item in filtered:
+        display_rows.append({
+            "申請編號" if not is_english else "Application No.":
+                item.get("booking_id"),
+            "日期" if not is_english else "Date":
+                item.get("booking_date"),
+            "時間" if not is_english else "Time":
+                f"{str(item.get('start_time'))[:5]}–{str(item.get('end_time'))[:5]}",
+            "教室" if not is_english else "Room":
+                item.get("room"),
+            "狀態" if not is_english else "Status":
+                status_label.get(item.get("status"), item.get("status")),
+            "借用事由" if not is_english else "Purpose":
+                item.get("reason"),
+            "審核備註" if not is_english else "Review Note":
+                item.get("review_note") or "",
+            "審核時間" if not is_english else "Reviewed At":
+                item.get("reviewed_at") or "",
+        })
+
+    st.dataframe(
+        pd.DataFrame(display_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    selectable = {
+        item["booking_id"]: item
+        for item in filtered
+        if item.get("booking_id")
+    }
+    selected_id = st.selectbox(
+        "查看詳細資料" if not is_english else "View Details",
+        list(selectable.keys()),
+        key="my_booking_detail",
+    )
+    item = selectable[selected_id]
+
+    with st.expander(
+        "借用申請詳細資料" if not is_english else "Reservation Details",
+        expanded=False,
+    ):
+        st.markdown(
+            f"**{'申請編號' if not is_english else 'Application No.'}：** "
+            f"{item.get('booking_id')}  \n"
+            f"**{'申請日期' if not is_english else 'Submitted At'}：** "
+            f"{item.get('created_at')}  \n"
+            f"**{'借用日期' if not is_english else 'Reservation Date'}：** "
+            f"{item.get('booking_date')}  \n"
+            f"**{'教室' if not is_english else 'Room'}：** "
+            f"{item.get('room')}  \n"
+            f"**{'時間' if not is_english else 'Time'}：** "
+            f"{str(item.get('start_time'))[:5]}–{str(item.get('end_time'))[:5]}  \n"
+            f"**{'狀態' if not is_english else 'Status'}：** "
+            f"{status_label.get(item.get('status'), item.get('status'))}  \n"
+            f"**{'借用事由' if not is_english else 'Purpose'}：** "
+            f"{item.get('reason')}  \n"
+            f"**{'審核備註' if not is_english else 'Review Note'}：** "
+            f"{item.get('review_note') or '—'}"
+        )
+
+    st.download_button(
+        "下載個人借用紀錄 Excel"
+        if not is_english else
+        "Download My Reservations",
+        xlsx(display_rows, "我的借用紀錄"),
+        f"my_reservations_{identification_code}.xlsx",
+        use_container_width=True,
+    )
+    return None
 
 
 def query():
@@ -1158,6 +1448,8 @@ def admin_page():
 
     if section == "借用審核":
         st.markdown("### 借用申請審核 / Reservation Review")
+        if "review_result_notice" in st.session_state:
+            st.info(st.session_state.pop("review_result_notice"))
         auto_mode = cached_auto_approve_setting()
         if auto_mode:
             st.info("目前為自動核准模式；符合規則且無衝突的申請會立即核准。")
@@ -1204,8 +1496,12 @@ def admin_page():
                 st.error(f"目前已有衝突，無法核准：{conflict['detail']}")
             else:
                 review_booking(booking_id, "已核准", "Administrator", note)
+                email_ok, email_message = notify_booking_review(booking_id, "已核准", note)
                 clear_data_cache()
-                st.success("申請已核准。")
+                st.session_state["review_result_notice"] = (
+                    "申請已核准，電子郵件已寄出。" if email_ok
+                    else f"申請已核准，但{email_message}"
+                )
                 st.rerun()
 
         if reject_col.button("退回申請", use_container_width=True):
@@ -1213,8 +1509,12 @@ def admin_page():
                 st.error("退回申請時請填寫原因。")
             else:
                 review_booking(booking_id, "已退回", "Administrator", note)
+                email_ok, email_message = notify_booking_review(booking_id, "已退回", note)
                 clear_data_cache()
-                st.warning("申請已退回。")
+                st.session_state["review_result_notice"] = (
+                    "申請已退回，電子郵件已寄出。" if email_ok
+                    else f"申請已退回，但{email_message}"
+                )
                 st.rerun()
         return None
 
@@ -1299,7 +1599,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.3", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.5", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1333,7 +1633,7 @@ t = TXT[st.session_state.language]
 if st.session_state.admin:
     pages = [t["home"], t["adminp"]]
 else:
-    pages = [t["home"], t["reserve"], t["query"]]
+    pages = [t["home"], t["reserve"], t["query"], t["myres"]]
 
 with st.sidebar:
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
@@ -1353,8 +1653,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.3")
-    st.caption("Course Query Function Fix Edition")
+    st.caption("AU-PCRS V10.5")
+    st.caption("My Reservations Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False
@@ -1399,5 +1699,7 @@ elif page == t["reserve"]:
     _ = reserve()
 elif page == t["query"]:
     _ = query()
+elif page == t["myres"]:
+    _ = my_reservations()
 else:
     _ = admin_page()

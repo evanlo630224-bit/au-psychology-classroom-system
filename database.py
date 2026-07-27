@@ -593,6 +593,71 @@ def get_room_status_counts(booking_date, room):
 
 def get_all_bookings():
     with engine.connect() as c:return _rows(c.execute(select(bookings).order_by(bookings.c.booking_date.desc(),bookings.c.start_time.desc())))
+
+def get_bookings_by_applicant(identification_code, limit=500):
+    """
+    Return reservations belonging to one authenticated applicant only.
+
+    identification_code is the faculty/staff number or student ID stored
+    during login and reservation creation.
+    """
+    code = str(identification_code or "").strip()
+    if not code:
+        return []
+
+    safe_limit = max(1, min(int(limit), 2000))
+    stmt = (
+        select(bookings)
+        .where(bookings.c.identification_code == code)
+        .order_by(
+            bookings.c.booking_date.desc(),
+            bookings.c.start_time.desc(),
+            bookings.c.created_at.desc(),
+        )
+        .limit(safe_limit)
+    )
+    with engine.connect() as conn:
+        return _rows(conn.execute(stmt))
+
+
+def get_applicant_booking_counts(identification_code):
+    """Return compact status counters for one authenticated applicant."""
+    code = str(identification_code or "").strip()
+    if not code:
+        return {
+            "all": 0,
+            "pending": 0,
+            "approved": 0,
+            "returned": 0,
+            "cancelled": 0,
+        }
+
+    with engine.connect() as conn:
+        total = conn.execute(
+            select(func.count())
+            .select_from(bookings)
+            .where(bookings.c.identification_code == code)
+        ).scalar_one()
+
+        def count_status(status):
+            return conn.execute(
+                select(func.count())
+                .select_from(bookings)
+                .where(and_(
+                    bookings.c.identification_code == code,
+                    bookings.c.status == status,
+                ))
+            ).scalar_one()
+
+        return {
+            "all": int(total),
+            "pending": int(count_status("待審核")),
+            "approved": int(count_status("已核准")),
+            "returned": int(count_status("已退回")),
+            "cancelled": int(count_status("已取消")),
+        }
+
+
 def get_booking_by_id(booking_id):
     with engine.connect() as c:r=c.execute(select(bookings).where(bookings.c.booking_id==booking_id)).first()
     return dict(r._mapping) if r else None

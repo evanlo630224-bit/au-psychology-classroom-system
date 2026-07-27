@@ -34,6 +34,7 @@ TXT = {
     "English": {
         "faculty": "Faculty", "student": "Student", "admin": "Administrator",
         "home": "Home", "reserve": "Reserve a Classroom", "query": "Check Availability",
+        "myres": "My Reservations",
         "adminp": "Admin Panel", "logout": "Log Out",
     },
 }
@@ -837,7 +838,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.5 My Reservations Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.6 My Reservations Key Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1599,7 +1600,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.5", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.6", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1633,7 +1634,7 @@ t = TXT[st.session_state.language]
 if st.session_state.admin:
     pages = [t["home"], t["adminp"]]
 else:
-    pages = [t["home"], t["reserve"], t["query"], t["myres"]]
+    pages = [t["home"], t["reserve"], t["query"], t.get("myres", "我的借用紀錄" if st.session_state.language == "中文" else "My Reservations")]
 
 with st.sidebar:
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
@@ -1653,8 +1654,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.5")
-    st.caption("My Reservations Edition")
+    st.caption("AU-PCRS V10.6")
+    st.caption("My Reservations Key Fix Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False
@@ -1699,7 +1700,7 @@ elif page == t["reserve"]:
     _ = reserve()
 elif page == t["query"]:
     _ = query()
-elif page == t["myres"]:
+elif page == t.get("myres", "我的借用紀錄" if st.session_state.language == "中文" else "My Reservations"):
     _ = my_reservations()
 else:
     _ = admin_page()

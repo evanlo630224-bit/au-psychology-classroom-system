@@ -584,14 +584,89 @@ def get_active_booking_for_slot(booking_date, room, start_time, end_time):
     return dict(row._mapping) if row else None
 
 
-def check_booking_conflict(booking_date,room,start_time,end_time,exclude_booking_id=None):
-    s,e=_time(start_time),_time(end_time)
-    for x in get_course_blocks(booking_date,room):
-        if s<x["end_time"] and e>x["start_time"]:return {"type":"course","detail":x["course_name"]}
-    cond=[bookings.c.booking_date==_date(booking_date),bookings.c.room==room,bookings.c.status.in_(["待審核","已核准"]),s<bookings.c.end_time,e>bookings.c.start_time]
-    if exclude_booking_id:cond.append(bookings.c.booking_id!=exclude_booking_id)
-    with engine.connect() as c:r=c.execute(select(bookings.c.booking_id).where(and_(*cond)).limit(1)).first()
-    return {"type":"booking","detail":r._mapping["booking_id"]} if r else None
+
+def _lock_room_date_transaction(conn, booking_date, room):
+    """
+    Serialize reservation changes for the same date and room.
+
+    PostgreSQL advisory transaction locks prevent two simultaneous requests
+    from both passing the overlap check before either insert is committed.
+    SQLite writes are already serialized for this application's use.
+    """
+    if engine.dialect.name == "postgresql":
+        lock_key = f"AU-PCRS|{_date(booking_date).isoformat()}|{room}"
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+            {"lock_key": lock_key},
+        )
+
+
+def _find_overlapping_active_booking(
+    conn,
+    booking_date,
+    room,
+    start_time,
+    end_time,
+    exclude_booking_id=None,
+):
+    conditions = [
+        bookings.c.booking_date == _date(booking_date),
+        bookings.c.room == room,
+        bookings.c.status.in_(["待審核", "已核准"]),
+        _time(start_time) < bookings.c.end_time,
+        _time(end_time) > bookings.c.start_time,
+    ]
+    if exclude_booking_id:
+        conditions.append(bookings.c.booking_id != exclude_booking_id)
+
+    row = conn.execute(
+        select(bookings)
+        .where(and_(*conditions))
+        .order_by(bookings.c.id.asc())
+        .limit(1)
+    ).first()
+    return dict(row._mapping) if row else None
+
+
+def get_overlapping_active_booking(
+    booking_date,
+    room,
+    start_time,
+    end_time,
+    exclude_booking_id=None,
+):
+    with engine.connect() as conn:
+        return _find_overlapping_active_booking(
+            conn,
+            booking_date,
+            room,
+            start_time,
+            end_time,
+            exclude_booking_id,
+        )
+
+
+def check_booking_conflict(booking_date, room, start_time, end_time,
+                           exclude_booking_id=None):
+    conflict = get_overlapping_active_booking(
+        booking_date,
+        room,
+        start_time,
+        end_time,
+        exclude_booking_id,
+    )
+    if not conflict:
+        return None
+    return {
+        "type": "booking",
+        "detail": (
+            f"{conflict['booking_id']}｜{conflict['status']}｜"
+            f"{str(conflict['start_time'])[:5]}–{str(conflict['end_time'])[:5]}"
+        ),
+        "booking_id": conflict["booking_id"],
+        "status": conflict["status"],
+    }
+
 def find_existing_booking(booking_date, room, start_time, end_time, identification_code):
     """Find an identical active application from the same applicant."""
     conditions = [
@@ -615,10 +690,9 @@ def find_existing_booking(booking_date, room, start_time, end_time, identificati
 def create_booking(booking_date, room, start_time, end_time, applicant_type,
                    applicant_name, identification_code, phone, email, reason):
     """
-    Create a booking with database-level duplicate protection.
+    Atomically reject every overlapping pending/approved reservation.
 
-    The unique partial index prevents simultaneous requests from creating
-    multiple pending/approved rows for the same date-room-time slot.
+    This protects both exact duplicates and partial overlaps.
     """
     ensure_active_booking_unique_index()
 
@@ -631,6 +705,35 @@ def create_booking(booking_date, room, start_time, end_time, applicant_type,
 
     try:
         with engine.begin() as conn:
+            _lock_room_date_transaction(conn, booking_date, room)
+
+            existing = _find_overlapping_active_booking(
+                conn,
+                booking_date,
+                room,
+                start_time,
+                end_time,
+            )
+            if existing:
+                same_applicant = (
+                    str(existing.get("identification_code") or "").strip()
+                    == code
+                )
+                exact_same = (
+                    str(existing["start_time"])[:5] == str(start_time)[:5]
+                    and str(existing["end_time"])[:5] == str(end_time)[:5]
+                )
+                if same_applicant and exact_same:
+                    return existing["booking_id"], existing["status"], True
+
+                raise ValueError(
+                    "該時段與既有案件重疊："
+                    f"{existing['booking_id']} "
+                    f"({str(existing['start_time'])[:5]}–"
+                    f"{str(existing['end_time'])[:5]}，"
+                    f"{existing['status']})"
+                )
+
             result = conn.execute(insert(bookings).values(
                 booking_id=None,
                 booking_date=_date(booking_date),
@@ -659,17 +762,19 @@ def create_booking(booking_date, room, start_time, end_time, applicant_type,
                 .values(booking_id=booking_id)
             )
     except IntegrityError:
-        existing = get_active_booking_for_slot(
+        existing = get_overlapping_active_booking(
             booking_date,
             room,
             start_time,
             end_time,
         )
-        if existing and str(existing.get("identification_code") or "").strip() == code:
+        if existing and (
+            str(existing.get("identification_code") or "").strip() == code
+        ):
             return existing["booking_id"], existing["status"], True
         if existing:
             raise ValueError(
-                f"該時段已有其他申請：{existing['booking_id']}"
+                f"該時段與既有案件重疊：{existing['booking_id']}"
             )
         raise
 
@@ -971,7 +1076,43 @@ def get_active_announcements(reference_date=None, limit=100):
 def review_booking(booking_id, decision, reviewer="Administrator", note=""):
     if decision not in {"已核准", "已退回"}:
         raise ValueError("Invalid review decision.")
+
     with engine.begin() as conn:
+        current_row = conn.execute(
+            select(bookings)
+            .where(bookings.c.booking_id == booking_id)
+            .limit(1)
+        ).first()
+        if not current_row:
+            raise ValueError("找不到借用申請。")
+
+        current = dict(current_row._mapping)
+        if current["status"] != "待審核":
+            raise ValueError("This reservation is no longer pending review.")
+
+        if decision == "已核准":
+            _lock_room_date_transaction(
+                conn,
+                current["booking_date"],
+                current["room"],
+            )
+            conflict = _find_overlapping_active_booking(
+                conn,
+                current["booking_date"],
+                current["room"],
+                current["start_time"],
+                current["end_time"],
+                exclude_booking_id=booking_id,
+            )
+            if conflict:
+                raise ValueError(
+                    "無法核准：此時段已由另一筆待審核或已核准案件保留。"
+                    f"衝突案件：{conflict['booking_id']} "
+                    f"({str(conflict['start_time'])[:5]}–"
+                    f"{str(conflict['end_time'])[:5]}，"
+                    f"{conflict['status']})"
+                )
+
         result = conn.execute(
             update(bookings)
             .where(and_(
@@ -987,11 +1128,12 @@ def review_booking(booking_id, decision, reviewer="Administrator", note=""):
                 updated_at=datetime.now(),
             )
         )
+
     if not result.rowcount:
         raise ValueError("This reservation is no longer pending review.")
+
     log_action("REVIEW", "booking", booking_id, f"{decision}: {note}")
     return decision
-
 
 def get_pending_bookings(limit=500):
     safe_limit = max(1, min(int(limit), 2000))

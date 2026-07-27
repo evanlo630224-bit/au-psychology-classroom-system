@@ -838,7 +838,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.7 Active Slot Uniqueness Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.8 Overlap Reservation Lock Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1473,6 +1473,11 @@ def admin_page():
         else:
             st.warning("目前為人工審核模式；所有新申請將先列為待審核。")
 
+        st.caption(
+            "待審核案件已暫時保留該日期、教室及完整重疊時段；"
+            "管理員無法核准另一筆相同或部分重疊的申請。"
+        )
+
         pending = cached_pending_bookings(500)
         if not pending:
             st.success("目前沒有待審核申請。")
@@ -1502,24 +1507,28 @@ def admin_page():
         note = st.text_area("審核備註")
         approve_col, reject_col = st.columns(2)
         if approve_col.button("核准申請", use_container_width=True):
-            conflict = check_booking_conflict(
-                str(item["booking_date"]),
-                item["room"],
-                str(item["start_time"])[:5],
-                str(item["end_time"])[:5],
-                exclude_booking_id=booking_id,
-            )
-            if conflict:
-                st.error(f"目前已有衝突，無法核准：{conflict['detail']}")
-            else:
-                review_booking(booking_id, "已核准", "Administrator", note)
-                email_ok, email_message = notify_booking_review(booking_id, "已核准", note)
-                clear_data_cache()
-                st.session_state["review_result_notice"] = (
-                    "申請已核准，電子郵件已寄出。" if email_ok
-                    else f"申請已核准，但{email_message}"
+            try:
+                review_booking(
+                    booking_id,
+                    "已核准",
+                    "Administrator",
+                    note,
                 )
-                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+                return None
+
+            email_ok, email_message = notify_booking_review(
+                booking_id,
+                "已核准",
+                note,
+            )
+            clear_data_cache()
+            st.session_state["review_result_notice"] = (
+                "申請已核准，電子郵件已寄出。" if email_ok
+                else f"申請已核准，但{email_message}"
+            )
+            st.rerun()
 
         if reject_col.button("退回申請", use_container_width=True):
             if not note.strip():
@@ -1616,7 +1625,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.7", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.8", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1670,8 +1679,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.7")
-    st.caption("Active Slot Uniqueness Fix Edition")
+    st.caption("AU-PCRS V10.8")
+    st.caption("Overlap Reservation Lock Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

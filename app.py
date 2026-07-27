@@ -838,7 +838,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.6 My Reservations Key Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.7 Active Slot Uniqueness Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -895,7 +895,13 @@ def reserve():
 
     receipt = st.session_state.pop("booking_receipt", None)
     if receipt:
-        if receipt["status"] == "已核准":
+        if receipt.get("was_existing"):
+            st.info(
+                f"An identical application already exists. Application No.: {receipt['booking_id']}"
+                if is_english else
+                f"相同時段的申請已存在，系統未重複新增。原申請編號：{receipt['booking_id']}"
+            )
+        elif receipt["status"] == "已核准":
             st.success(
                 f"Application approved. Reservation No.: {receipt['booking_id']}"
                 if is_english else
@@ -985,22 +991,32 @@ def reserve():
             )
             return
 
-        booking_id, booking_status = create_booking(
-            str(booking_date),
-            room,
-            start_time,
-            end_time,
-            user["user_type"],
-            user["name"],
-            user["identification_code"],
-            phone,
-            email,
-            reason,
-        )
+        try:
+            booking_id, booking_status, was_existing = create_booking(
+                str(booking_date),
+                room,
+                start_time,
+                end_time,
+                user["user_type"],
+                user["name"],
+                user["identification_code"],
+                phone,
+                email,
+                reason,
+            )
+        except ValueError as exc:
+            st.error(
+                f"Time conflict: {exc}"
+                if is_english else
+                f"時段衝突：{exc}"
+            )
+            return
+
         clear_data_cache()
         st.session_state["booking_receipt"] = {
             "booking_id": booking_id,
             "status": booking_status,
+            "was_existing": was_existing,
         }
         st.rerun()
 
@@ -1600,7 +1616,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.6", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.7", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1654,8 +1670,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.6")
-    st.caption("My Reservations Key Fix Edition")
+    st.caption("AU-PCRS V10.7")
+    st.caption("Active Slot Uniqueness Fix Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

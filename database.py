@@ -353,9 +353,10 @@ def init_db():
 
 
 def ensure_admin_schema_once():
-    """Run expensive schema checks only when the admin panel is opened."""
+    """Run full admin schema checks and retain booking uniqueness."""
     ensure_feature_tables()
     migrate_schema()
+    ensure_active_booking_unique_index()
     return True
 
 
@@ -488,6 +489,101 @@ def get_course_blocks_for_date(booking_date, room, semester=None):
     return get_course_blocks(booking_date, room, semester)
 
 
+
+def _active_slot_key(row):
+    return (
+        str(row["booking_date"]),
+        str(row["room"]),
+        str(row["start_time"])[:8],
+        str(row["end_time"])[:8],
+    )
+
+
+def deduplicate_active_booking_slots():
+    """
+    Keep the earliest active application for each date/room/time slot.
+
+    Later duplicate pending/approved records are changed to cancelled so the
+    unique active-slot index can be created safely.
+    """
+    stmt = (
+        select(bookings)
+        .where(bookings.c.status.in_(["待審核", "已核准"]))
+        .order_by(bookings.c.id.asc())
+    )
+    with engine.begin() as conn:
+        active_rows = _rows(conn.execute(stmt))
+        seen = {}
+        cancelled_ids = []
+
+        for row in active_rows:
+            key = _active_slot_key(row)
+            if key not in seen:
+                seen[key] = row["booking_id"]
+                continue
+
+            cancelled_ids.append(row["id"])
+            kept_booking_id = seen[key]
+            conn.execute(
+                update(bookings)
+                .where(bookings.c.id == row["id"])
+                .values(
+                    status="已取消",
+                    cancel_reason=f"系統自動取消重複申請；保留案件：{kept_booking_id}",
+                    cancelled_at=datetime.now(),
+                    reviewed_by="SYSTEM",
+                    reviewed_at=datetime.now(),
+                    review_note=f"Duplicate active slot; retained {kept_booking_id}",
+                    updated_at=datetime.now(),
+                )
+            )
+
+    for duplicate_id in cancelled_ids:
+        log_action(
+            "AUTO_DEDUPLICATE",
+            "booking",
+            str(duplicate_id),
+            "Duplicate active date/room/time slot automatically cancelled.",
+        )
+    return len(cancelled_ids)
+
+
+def ensure_active_booking_unique_index():
+    """
+    Enforce one pending/approved booking for each date-room-time slot.
+
+    PostgreSQL and SQLite both support the partial unique index syntax used
+    here. Cancelled and returned records do not block a later application.
+    """
+    deduplicate_active_booking_slots()
+    sql = """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_bookings_active_slot
+    ON bookings (booking_date, room, start_time, end_time)
+    WHERE status IN ('待審核', '已核准')
+    """
+    with engine.begin() as conn:
+        conn.execute(text(sql))
+    return True
+
+
+def get_active_booking_for_slot(booking_date, room, start_time, end_time):
+    conditions = [
+        bookings.c.booking_date == _date(booking_date),
+        bookings.c.room == room,
+        bookings.c.start_time == _time(start_time),
+        bookings.c.end_time == _time(end_time),
+        bookings.c.status.in_(["待審核", "已核准"]),
+    ]
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(bookings)
+            .where(and_(*conditions))
+            .order_by(bookings.c.id.asc())
+            .limit(1)
+        ).first()
+    return dict(row._mapping) if row else None
+
+
 def check_booking_conflict(booking_date,room,start_time,end_time,exclude_booking_id=None):
     s,e=_time(start_time),_time(end_time)
     for x in get_course_blocks(booking_date,room):
@@ -518,35 +614,72 @@ def find_existing_booking(booking_date, room, start_time, end_time, identificati
 
 def create_booking(booking_date, room, start_time, end_time, applicant_type,
                    applicant_name, identification_code, phone, email, reason):
+    """
+    Create a booking with database-level duplicate protection.
+
+    The unique partial index prevents simultaneous requests from creating
+    multiple pending/approved rows for the same date-room-time slot.
+    """
+    ensure_active_booking_unique_index()
+
     auto_approve = get_setting_bool("auto_approve_bookings", False)
     booking_status = "已核准" if auto_approve else "待審核"
     approval_mode = "自動核准" if auto_approve else "人工審核"
     reviewed_by = "SYSTEM" if auto_approve else None
     reviewed_at = datetime.now() if auto_approve else None
-    with engine.begin() as c:
-        r = c.execute(insert(bookings).values(
-            booking_id=None,
-            booking_date=_date(booking_date),
-            room=room,
-            start_time=_time(start_time),
-            end_time=_time(end_time),
-            applicant_type=applicant_type,
-            applicant_name=applicant_name,
-            identification_code=identification_code,
-            phone=phone,
-            email=email,
-            reason=reason,
-            status=booking_status,
-            approval_mode=approval_mode,
-            reviewed_by=reviewed_by,
-            reviewed_at=reviewed_at,
-            created_at=datetime.now(),
-        ))
-        rid = int(r.inserted_primary_key[0])
-        bid = f"AU-PSY-{_date(booking_date).strftime('%Y%m%d')}-{rid:05d}"
-        c.execute(update(bookings).where(bookings.c.id == rid).values(booking_id=bid))
-    log_action("CREATE", "booking", bid, f"{room} {start_time}-{end_time} status={booking_status}")
-    return bid, booking_status
+    code = str(identification_code or "").strip()
+
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(insert(bookings).values(
+                booking_id=None,
+                booking_date=_date(booking_date),
+                room=room,
+                start_time=_time(start_time),
+                end_time=_time(end_time),
+                applicant_type=applicant_type,
+                applicant_name=applicant_name,
+                identification_code=code,
+                phone=phone,
+                email=email,
+                reason=reason,
+                status=booking_status,
+                approval_mode=approval_mode,
+                reviewed_by=reviewed_by,
+                reviewed_at=reviewed_at,
+                created_at=datetime.now(),
+            ))
+            row_id = int(result.inserted_primary_key[0])
+            booking_id = (
+                f"AU-PSY-{_date(booking_date).strftime('%Y%m%d')}-{row_id:05d}"
+            )
+            conn.execute(
+                update(bookings)
+                .where(bookings.c.id == row_id)
+                .values(booking_id=booking_id)
+            )
+    except IntegrityError:
+        existing = get_active_booking_for_slot(
+            booking_date,
+            room,
+            start_time,
+            end_time,
+        )
+        if existing and str(existing.get("identification_code") or "").strip() == code:
+            return existing["booking_id"], existing["status"], True
+        if existing:
+            raise ValueError(
+                f"該時段已有其他申請：{existing['booking_id']}"
+            )
+        raise
+
+    log_action(
+        "CREATE",
+        "booking",
+        booking_id,
+        f"{room} {start_time}-{end_time} status={booking_status}",
+    )
+    return booking_id, booking_status, False
 
 def get_bookings_by_date_room(booking_date, room, status=None):
     """Return only bookings required by the classroom availability page."""
@@ -872,7 +1005,8 @@ def get_pending_bookings(limit=500):
 
 
 def initialize_database_once():
-    """Fast startup: create missing tables without full legacy migration."""
+    """Fast startup with active booking uniqueness protection."""
     metadata.create_all(engine)
+    ensure_active_booking_unique_index()
     return True
 

@@ -715,23 +715,12 @@ def create_booking(booking_date, room, start_time, end_time, applicant_type,
                 end_time,
             )
             if existing:
-                same_applicant = (
-                    str(existing.get("identification_code") or "").strip()
-                    == code
-                )
-                exact_same = (
-                    str(existing["start_time"])[:5] == str(start_time)[:5]
-                    and str(existing["end_time"])[:5] == str(end_time)[:5]
-                )
-                if same_applicant and exact_same:
-                    return existing["booking_id"], existing["status"], True
-
                 raise ValueError(
-                    "該時段與既有案件重疊："
-                    f"{existing['booking_id']} "
-                    f"({str(existing['start_time'])[:5]}–"
-                    f"{str(existing['end_time'])[:5]}，"
-                    f"{existing['status']})"
+                    "該時段已被保留："
+                    f"{existing['booking_id']}｜"
+                    f"{existing['status']}｜"
+                    f"{str(existing['start_time'])[:5]}–"
+                    f"{str(existing['end_time'])[:5]}"
                 )
 
             result = conn.execute(insert(bookings).values(
@@ -768,13 +757,13 @@ def create_booking(booking_date, room, start_time, end_time, applicant_type,
             start_time,
             end_time,
         )
-        if existing and (
-            str(existing.get("identification_code") or "").strip() == code
-        ):
-            return existing["booking_id"], existing["status"], True
         if existing:
             raise ValueError(
-                f"該時段與既有案件重疊：{existing['booking_id']}"
+                "該時段已被保留："
+                f"{existing['booking_id']}｜"
+                f"{existing['status']}｜"
+                f"{str(existing['start_time'])[:5]}–"
+                f"{str(existing['end_time'])[:5]}"
             )
         raise
 

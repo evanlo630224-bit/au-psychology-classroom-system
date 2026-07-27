@@ -356,6 +356,21 @@ def style(login_mode=False):
         [data-testid="stMetricValue"]{{font-size:2rem!important}}
         .block-container{{padding-top:.5rem!important}}
     }}
+
+    .review-selector-title{{
+        font-size:1.35rem;
+        font-weight:900;
+        line-height:1.35;
+        color:#292536;
+        margin:1.15rem 0 .55rem;
+        letter-spacing:.01em;
+    }}
+    @media(max-width:900px){{
+        .review-selector-title{{
+            font-size:1.25rem;
+            margin-top:1rem;
+        }}
+    }}
     {login_css}
     </style>''', unsafe_allow_html=True)
 
@@ -838,7 +853,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.9 Same Applicant Conflict Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.10 Review Selector Emphasis Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1484,10 +1499,16 @@ def admin_page():
             )
             for row in pending
         }
+        st.markdown(
+            '<div class="review-selector-title">選擇待審核申請</div>',
+            unsafe_allow_html=True,
+        )
         booking_id = st.selectbox(
             "選擇待審核申請",
             list(labels.keys()),
             format_func=lambda value: labels[value],
+            label_visibility="collapsed",
+            key="pending_review_selector",
         )
         item = next(row for row in pending if row["booking_id"] == booking_id)
         st.markdown(
@@ -1618,7 +1639,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.9", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.10", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1672,8 +1693,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.9")
-    st.caption("Same Applicant Conflict Fix Edition")
+    st.caption("AU-PCRS V10.10")
+    st.caption("Review Selector Emphasis Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

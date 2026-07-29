@@ -853,7 +853,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.10 Review Selector Emphasis Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.11 Admin Menu Fast Load Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1220,12 +1220,6 @@ def query():
 
 
 def admin_page():
-    try:
-        cached_ensure_admin_schema()
-    except Exception:
-        st.error("管理功能初始化失敗，請稍後重新整理。")
-        return None
-
     st.markdown("## 管理員後台 / Administration")
 
     section = st.radio(
@@ -1235,7 +1229,20 @@ def admin_page():
         key="admin_section",
     )
 
+    schema_required_sections = {
+        "公告管理", "名冊管理", "開放期間", "課表管理",
+        "借用審核", "借用管理", "操作紀錄",
+    }
+    if section in schema_required_sections:
+        try:
+            with st.spinner("正在載入管理功能…"):
+                cached_ensure_admin_schema()
+        except Exception:
+            st.error("管理功能初始化失敗，請稍後重新整理。")
+            return None
+
     if section == "儀表板":
+        st.caption("管理功能採延遲載入，僅讀取目前選擇的功能資料。")
         _ = render_dashboard()
         return None
 
@@ -1639,7 +1646,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.10", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.11", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1693,8 +1700,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.10")
-    st.caption("Review Selector Emphasis Edition")
+    st.caption("AU-PCRS V10.11")
+    st.caption("Admin Menu Fast Load Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

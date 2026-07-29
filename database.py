@@ -353,12 +353,12 @@ def init_db():
 
 
 def ensure_admin_schema_once():
-    """Run full admin schema checks and retain booking uniqueness."""
+    """Run full schema checks only when an admin function requires them."""
+    metadata.create_all(engine)
+    ensure_active_booking_unique_index()
     ensure_feature_tables()
     migrate_schema()
-    ensure_active_booking_unique_index()
     return True
-
 
 def database_health_check():
     try:

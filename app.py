@@ -853,7 +853,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.11 Admin Menu Fast Load Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.12 Duplicate Conflict Notice Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -908,6 +908,10 @@ def reserve():
     is_english = lang == "English"
     earliest_date = date.today() + timedelta(days=3)
 
+    conflict_notice = st.session_state.pop("booking_conflict_notice", None)
+    if conflict_notice:
+        st.error(conflict_notice)
+
     receipt = st.session_state.pop("booking_receipt", None)
     if receipt:
         if receipt["status"] == "已核准":
@@ -956,6 +960,8 @@ def reserve():
         )
 
     if submitted:
+        st.session_state.pop("booking_receipt", None)
+        st.session_state.pop("booking_conflict_notice", None)
         if booking_date < earliest_date:
             st.error(
                 "The reservation date must be at least three days after today."
@@ -981,24 +987,21 @@ def reserve():
             )
             return
 
-        conflict = check_booking_conflict(str(booking_date), room, start_time, end_time)
+        conflict = check_booking_conflict(
+            str(booking_date),
+            room,
+            start_time,
+            end_time,
+        )
         if conflict:
-            existing = find_existing_booking(
-                str(booking_date), room, start_time, end_time,
-                user["identification_code"],
-            )
-            if existing:
-                st.session_state["booking_receipt"] = {
-                    "booking_id": existing["booking_id"],
-                    "status": existing["status"],
-                }
-                st.rerun()
-            st.error(
-                f"Time conflict: {conflict['detail']}"
+            st.session_state["booking_conflict_notice"] = (
+                f"Duplicate reservation / Time conflict: {conflict['detail']}. "
+                "This time slot is already reserved. Please choose another date or time."
                 if is_english else
-                f"時段衝突：{conflict['detail']}。此時段已被保留，請選擇其他日期或時間。"
+                f"重複借用／時段衝突：{conflict['detail']}。"
+                "此時段已有待審核或已核准案件，請選擇其他日期或時間。"
             )
-            return
+            st.rerun()
 
         try:
             booking_id, booking_status, was_existing = create_booking(
@@ -1014,14 +1017,17 @@ def reserve():
                 reason,
             )
         except ValueError as exc:
-            st.error(
-                f"Time conflict: {exc}. Please choose another date or time."
+            st.session_state["booking_conflict_notice"] = (
+                f"Duplicate reservation / Time conflict: {exc}. "
+                "Please choose another date or time."
                 if is_english else
-                f"時段衝突：{exc}。此時段已被保留，請選擇其他日期或時間。"
+                f"重複借用／時段衝突：{exc}。"
+                "此時段已有待審核或已核准案件，請選擇其他日期或時間。"
             )
-            return
+            st.rerun()
 
         clear_data_cache()
+        st.session_state.pop("booking_conflict_notice", None)
         st.session_state["booking_receipt"] = {
             "booking_id": booking_id,
             "status": booking_status,
@@ -1646,7 +1652,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.11", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.12", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1700,8 +1706,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.11")
-    st.caption("Admin Menu Fast Load Edition")
+    st.caption("AU-PCRS V10.12")
+    st.caption("Duplicate Conflict Notice Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

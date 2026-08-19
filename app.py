@@ -95,7 +95,7 @@ def admin_password():
             return str(st.secrets["admin"]["password"])
     except Exception:
         pass
-    return os.getenv("ADMIN_PASSWORD", "Asiapsy5712!")
+    return os.getenv("ADMIN_PASSWORD", "admin123")
 
 
 def valid_email(value):
@@ -543,6 +543,51 @@ AU-PCRS
     return subject, body
 
 
+
+def build_cancel_email(booking, cancel_reason=""):
+    subject = (
+        f"【AU-PCRS】教室借用已取消／Reservation Cancelled "
+        f"({booking['booking_id']})"
+    )
+    reason = cancel_reason.strip() or "無／None"
+    body = f"""您好 {booking['applicant_name']}：
+
+您的專業教室借用已由您本人取消：
+
+申請編號：{booking['booking_id']}
+借用日期：{booking['booking_date']}
+借用教室：{booking['room']}
+借用時間：{str(booking['start_time'])[:5]}–{str(booking['end_time'])[:5]}
+借用事由：{booking['reason']}
+取消原因：{reason}
+
+Dear {booking['applicant_name']},
+
+Your classroom reservation has been cancelled by you:
+
+Application No.: {booking['booking_id']}
+Date: {booking['booking_date']}
+Room: {booking['room']}
+Time: {str(booking['start_time'])[:5]}–{str(booking['end_time'])[:5]}
+Purpose: {booking['reason']}
+Cancellation Reason: {reason}
+
+亞洲大學心理學系
+Department of Psychology, Asia University
+AU-PCRS
+"""
+    return subject, body
+
+
+def notify_booking_cancelled(booking_id, cancel_reason=""):
+    booking = get_booking_by_id(booking_id)
+    if not booking:
+        return False, "找不到借用申請資料。"
+    subject, body = build_cancel_email(booking, cancel_reason)
+    return send_system_email(booking.get("email"), subject, body)
+
+
+
 def notify_booking_review(booking_id, decision, review_note=""):
     booking = get_booking_by_id(booking_id)
     if not booking:
@@ -853,7 +898,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.12 Duplicate Conflict Notice Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.13 User Cancel Reservation Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1042,6 +1087,11 @@ def my_reservations():
     is_english = lang == "English"
     identification_code = user.get("identification_code")
 
+    if "my_booking_cancel_notice" in st.session_state:
+        st.success(st.session_state.pop("my_booking_cancel_notice"))
+    if "my_booking_cancel_email_warning" in st.session_state:
+        st.warning(st.session_state.pop("my_booking_cancel_email_warning"))
+
     st.markdown(
         "## My Reservations"
         if is_english else
@@ -1199,6 +1249,89 @@ def my_reservations():
             f"**{'審核備註' if not is_english else 'Review Note'}：** "
             f"{item.get('review_note') or '—'}"
         )
+
+
+    item_date_for_cancel = item.get("booking_date")
+    if isinstance(item_date_for_cancel, str):
+        try:
+            item_date_for_cancel = date.fromisoformat(item_date_for_cancel[:10])
+        except Exception:
+            item_date_for_cancel = None
+
+    can_cancel = (
+        item.get("status") in {"待審核", "已核准"}
+        and (item_date_for_cancel is None or item_date_for_cancel >= date.today())
+    )
+
+    if can_cancel:
+        st.divider()
+        st.markdown(
+            "### Cancel Reservation"
+            if is_english else
+            "### 取消借用 / Cancel Reservation"
+        )
+        st.warning(
+            "Cancelling will immediately release this classroom time slot."
+            if is_english else
+            "取消後將立即釋放此教室時段，其他使用者即可重新申請。"
+        )
+        cancel_reason = st.text_area(
+            "Cancellation Reason" if is_english else "取消原因",
+            key=f"user_cancel_reason_{selected_id}",
+        )
+        confirm_cancel = st.checkbox(
+            "I confirm that I want to cancel this reservation."
+            if is_english else
+            "我確認要取消此筆借用申請",
+            key=f"user_cancel_confirm_{selected_id}",
+        )
+
+        if st.button(
+            "Cancel Reservation" if is_english else "確認取消借用",
+            use_container_width=True,
+            type="secondary",
+            key=f"user_cancel_button_{selected_id}",
+        ):
+            if not cancel_reason.strip():
+                st.error(
+                    "Please enter a cancellation reason."
+                    if is_english else
+                    "請填寫取消原因。"
+                )
+                return None
+            if not confirm_cancel:
+                st.error(
+                    "Please check the confirmation box first."
+                    if is_english else
+                    "請先勾選取消確認。"
+                )
+                return None
+
+            try:
+                cancel_booking_by_applicant(
+                    selected_id,
+                    identification_code,
+                    cancel_reason.strip(),
+                )
+            except (ValueError, PermissionError) as exc:
+                st.error(str(exc))
+                return None
+
+            if email_notification_enabled():
+                email_ok, email_message = notify_booking_cancelled(
+                    selected_id,
+                    cancel_reason.strip(),
+                )
+                if not email_ok:
+                    st.session_state["my_booking_cancel_email_warning"] = email_message
+
+            clear_data_cache()
+            st.session_state["my_booking_cancel_notice"] = (
+                "Reservation cancelled successfully."
+                if is_english else
+                "借用已成功取消，該時段已重新釋放。"
+            )
+            st.rerun()
 
     st.download_button(
         "下載個人借用紀錄 Excel"
@@ -1652,7 +1785,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.12", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.13", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1706,8 +1839,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.12")
-    st.caption("Duplicate Conflict Notice Edition")
+    st.caption("AU-PCRS V10.13")
+    st.caption("User Cancel Reservation Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

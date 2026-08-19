@@ -821,6 +821,68 @@ def get_room_status_counts(booking_date, room):
 def get_all_bookings():
     with engine.connect() as c:return _rows(c.execute(select(bookings).order_by(bookings.c.booking_date.desc(),bookings.c.start_time.desc())))
 
+
+def cancel_booking_by_applicant(booking_id, identification_code, cancel_reason):
+    """Allow a faculty/student to cancel only their own active reservation."""
+    code = str(identification_code or "").strip()
+    reason = str(cancel_reason or "").strip()
+    if not code:
+        raise ValueError("缺少申請人識別碼。")
+    if not reason:
+        raise ValueError("請填寫取消原因。")
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(bookings)
+            .where(bookings.c.booking_id == booking_id)
+            .limit(1)
+        ).first()
+
+        if not row:
+            raise ValueError("找不到借用申請。")
+
+        item = dict(row._mapping)
+
+        if str(item.get("identification_code") or "").strip() != code:
+            raise PermissionError("不可取消其他申請人的借用案件。")
+
+        if item.get("status") not in {"待審核", "已核准"}:
+            raise ValueError("此案件目前不可取消。")
+
+        booking_date = item.get("booking_date")
+        if isinstance(booking_date, str):
+            booking_date = date.fromisoformat(booking_date[:10])
+
+        if booking_date and booking_date < date.today():
+            raise ValueError("已過期的借用案件不可取消。")
+
+        result = conn.execute(
+            update(bookings)
+            .where(and_(
+                bookings.c.booking_id == booking_id,
+                bookings.c.identification_code == code,
+                bookings.c.status.in_(["待審核", "已核准"]),
+            ))
+            .values(
+                status="已取消",
+                cancel_reason=reason,
+                cancelled_at=datetime.now(),
+                updated_at=datetime.now(),
+            )
+        )
+        if not result.rowcount:
+            raise ValueError("案件狀態已變更，無法取消。")
+
+    log_action(
+        "USER_CANCEL",
+        "booking",
+        booking_id,
+        f"Applicant cancelled reservation: {reason}",
+    )
+    return True
+
+
+
 def get_bookings_by_applicant(identification_code, limit=500):
     """
     Return reservations belonging to one authenticated applicant only.

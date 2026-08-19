@@ -95,7 +95,7 @@ def admin_password():
             return str(st.secrets["admin"]["password"])
     except Exception:
         pass
-    return os.getenv("ADMIN_PASSWORD", "Asiapsy5712")
+    return os.getenv("ADMIN_PASSWORD", "Asiapsy5712!")
 
 
 def valid_email(value):

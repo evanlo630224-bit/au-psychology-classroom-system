@@ -898,7 +898,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.13 User Cancel Reservation Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.15 Booking Management Completion Notice Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1120,6 +1120,131 @@ def my_reservations():
         )
         return None
 
+    today = date.today()
+    cancellable_rows = []
+    for record in rows:
+        record_date = record.get("booking_date")
+        if isinstance(record_date, str):
+            try:
+                record_date = date.fromisoformat(record_date[:10])
+            except Exception:
+                record_date = None
+
+        if (
+            record.get("status") in {"待審核", "已核准"}
+            and (record_date is None or record_date >= today)
+        ):
+            cancellable_rows.append(record)
+
+    st.markdown(
+        "### Cancellable Reservations"
+        if is_english else
+        "### 可取消借用案件 / Cancellable Reservations"
+    )
+
+    if not cancellable_rows:
+        st.info(
+            "There are currently no reservations that can be cancelled."
+            if is_english else
+            "目前沒有可自行取消的借用案件。"
+        )
+    else:
+        cancel_labels = {
+            record["booking_id"]: (
+                f'{record["booking_date"]}｜{record["room"]}｜'
+                f'{str(record["start_time"])[:5]}–{str(record["end_time"])[:5]}｜'
+                f'{"Pending Review" if record["status"] == "待審核" else "Reserved"}'
+                if is_english else
+                f'{record["booking_date"]}｜{record["room"]}｜'
+                f'{str(record["start_time"])[:5]}–{str(record["end_time"])[:5]}｜'
+                f'{"借用審核中" if record["status"] == "待審核" else "已借用"}'
+            )
+            for record in cancellable_rows
+        }
+
+        cancel_booking_id = st.selectbox(
+            "Select a reservation to cancel"
+            if is_english else
+            "選擇要取消的借用案件",
+            list(cancel_labels.keys()),
+            format_func=lambda value: cancel_labels[value],
+            key="visible_cancel_booking_selector",
+        )
+        cancel_record = next(
+            record for record in cancellable_rows
+            if record["booking_id"] == cancel_booking_id
+        )
+
+        st.caption(
+            f"Application No.: {cancel_booking_id}"
+            if is_english else
+            f"申請編號：{cancel_booking_id}"
+        )
+
+        cancel_reason_quick = st.text_area(
+            "Cancellation Reason"
+            if is_english else
+            "取消原因",
+            key=f"visible_cancel_reason_{cancel_booking_id}",
+        )
+        confirm_cancel_quick = st.checkbox(
+            "I confirm that I want to cancel this reservation."
+            if is_english else
+            "我確認要取消此筆借用申請",
+            key=f"visible_cancel_confirm_{cancel_booking_id}",
+        )
+
+        if st.button(
+            "Cancel Reservation"
+            if is_english else
+            "確認取消借用",
+            type="primary",
+            use_container_width=True,
+            key=f"visible_cancel_button_{cancel_booking_id}",
+        ):
+            if not cancel_reason_quick.strip():
+                st.error(
+                    "Please enter a cancellation reason."
+                    if is_english else
+                    "請填寫取消原因。"
+                )
+                return None
+            if not confirm_cancel_quick:
+                st.error(
+                    "Please confirm cancellation first."
+                    if is_english else
+                    "請先勾選取消確認。"
+                )
+                return None
+
+            try:
+                cancel_booking_by_applicant(
+                    cancel_booking_id,
+                    identification_code,
+                    cancel_reason_quick.strip(),
+                )
+            except (ValueError, PermissionError) as exc:
+                st.error(str(exc))
+                return None
+
+            if email_notification_enabled():
+                email_ok, email_message = notify_booking_cancelled(
+                    cancel_booking_id,
+                    cancel_reason_quick.strip(),
+                )
+                if not email_ok:
+                    st.session_state["my_booking_cancel_email_warning"] = email_message
+
+            clear_data_cache()
+            st.session_state["my_booking_cancel_notice"] = (
+                "Reservation cancelled successfully."
+                if is_english else
+                "借用已成功取消，該時段已重新釋放。"
+            )
+            st.rerun()
+
+    st.divider()
+
     status_options = (
         ["All", "Pending Review", "Approved", "Returned", "Cancelled"]
         if is_english else
@@ -1250,88 +1375,6 @@ def my_reservations():
             f"{item.get('review_note') or '—'}"
         )
 
-
-    item_date_for_cancel = item.get("booking_date")
-    if isinstance(item_date_for_cancel, str):
-        try:
-            item_date_for_cancel = date.fromisoformat(item_date_for_cancel[:10])
-        except Exception:
-            item_date_for_cancel = None
-
-    can_cancel = (
-        item.get("status") in {"待審核", "已核准"}
-        and (item_date_for_cancel is None or item_date_for_cancel >= date.today())
-    )
-
-    if can_cancel:
-        st.divider()
-        st.markdown(
-            "### Cancel Reservation"
-            if is_english else
-            "### 取消借用 / Cancel Reservation"
-        )
-        st.warning(
-            "Cancelling will immediately release this classroom time slot."
-            if is_english else
-            "取消後將立即釋放此教室時段，其他使用者即可重新申請。"
-        )
-        cancel_reason = st.text_area(
-            "Cancellation Reason" if is_english else "取消原因",
-            key=f"user_cancel_reason_{selected_id}",
-        )
-        confirm_cancel = st.checkbox(
-            "I confirm that I want to cancel this reservation."
-            if is_english else
-            "我確認要取消此筆借用申請",
-            key=f"user_cancel_confirm_{selected_id}",
-        )
-
-        if st.button(
-            "Cancel Reservation" if is_english else "確認取消借用",
-            use_container_width=True,
-            type="secondary",
-            key=f"user_cancel_button_{selected_id}",
-        ):
-            if not cancel_reason.strip():
-                st.error(
-                    "Please enter a cancellation reason."
-                    if is_english else
-                    "請填寫取消原因。"
-                )
-                return None
-            if not confirm_cancel:
-                st.error(
-                    "Please check the confirmation box first."
-                    if is_english else
-                    "請先勾選取消確認。"
-                )
-                return None
-
-            try:
-                cancel_booking_by_applicant(
-                    selected_id,
-                    identification_code,
-                    cancel_reason.strip(),
-                )
-            except (ValueError, PermissionError) as exc:
-                st.error(str(exc))
-                return None
-
-            if email_notification_enabled():
-                email_ok, email_message = notify_booking_cancelled(
-                    selected_id,
-                    cancel_reason.strip(),
-                )
-                if not email_ok:
-                    st.session_state["my_booking_cancel_email_warning"] = email_message
-
-            clear_data_cache()
-            st.session_state["my_booking_cancel_notice"] = (
-                "Reservation cancelled successfully."
-                if is_english else
-                "借用已成功取消，該時段已重新釋放。"
-            )
-            st.rerun()
 
     st.download_button(
         "下載個人借用紀錄 Excel"
@@ -1705,6 +1748,9 @@ def admin_page():
         return None
 
     if section == "借用管理":
+        if "booking_management_notice" in st.session_state:
+            st.success(st.session_state.pop("booking_management_notice"))
+
         limit = st.selectbox("顯示最近紀錄", [100, 300, 500, 1000], index=1)
         rows = cached_recent_bookings(limit)
         if not rows:
@@ -1763,14 +1809,22 @@ def admin_page():
                             new_reason,
                         )
                         clear_data_cache()
-                        st.success("借用資料已更新。")
+                        st.session_state["booking_management_notice"] = (
+                            f"借用資料修改已完成。申請編號：{booking_id}"
+                        )
+                        st.rerun()
 
             cancel_reason = st.text_input("取消原因")
-            if st.button("取消借用") and cancel_reason.strip():
-                cancel_booking(booking_id, cancel_reason.strip())
-                clear_data_cache()
-                st.success("借用已取消。")
-                st.rerun()
+            if st.button("取消借用"):
+                if not cancel_reason.strip():
+                    st.error("請填寫取消原因。")
+                else:
+                    cancel_booking(booking_id, cancel_reason.strip())
+                    clear_data_cache()
+                    st.session_state["booking_management_notice"] = (
+                        f"取消借用已完成。申請編號：{booking_id}"
+                    )
+                    st.rerun()
         return None
 
     if section == "操作紀錄":
@@ -1785,7 +1839,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.13", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.15", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1839,8 +1893,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.13")
-    st.caption("User Cancel Reservation Edition")
+    st.caption("AU-PCRS V10.15")
+    st.caption("Booking Management Completion Notice Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

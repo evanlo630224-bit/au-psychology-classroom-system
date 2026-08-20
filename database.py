@@ -687,6 +687,105 @@ def find_existing_booking(booking_date, room, start_time, end_time, identificati
     return dict(row._mapping) if row else None
 
 
+
+
+def create_admin_assisted_booking(
+    booking_date,
+    room,
+    start_time,
+    end_time,
+    applicant_type,
+    applicant_name,
+    identification_code,
+    phone,
+    email,
+    reason,
+    reviewer="Administrator",
+):
+    """
+    Create an administrator-assisted reservation.
+
+    This intentionally bypasses the teacher/student N+1 rule, but still
+    enforces room/date overlap protection. The record is immediately approved.
+    """
+    ensure_active_booking_unique_index()
+    code = str(identification_code or "").strip()
+
+    try:
+        with engine.begin() as conn:
+            _lock_room_date_transaction(conn, booking_date, room)
+
+            existing = _find_overlapping_active_booking(
+                conn,
+                booking_date,
+                room,
+                start_time,
+                end_time,
+            )
+            if existing:
+                raise ValueError(
+                    "該時段已被保留："
+                    f"{existing['booking_id']}｜"
+                    f"{existing['status']}｜"
+                    f"{str(existing['start_time'])[:5]}–"
+                    f"{str(existing['end_time'])[:5]}"
+                )
+
+            result = conn.execute(insert(bookings).values(
+                booking_id=None,
+                booking_date=_date(booking_date),
+                room=room,
+                start_time=_time(start_time),
+                end_time=_time(end_time),
+                applicant_type=applicant_type,
+                applicant_name=applicant_name,
+                identification_code=code,
+                phone=phone,
+                email=email,
+                reason=reason,
+                status="已核准",
+                approval_mode="管理員協助",
+                reviewed_by=reviewer,
+                reviewed_at=datetime.now(),
+                review_note="管理員協助建立借用／Created by administrator",
+                created_at=datetime.now(),
+            ))
+            row_id = int(result.inserted_primary_key[0])
+            booking_id = (
+                f"AU-PSY-{_date(booking_date).strftime('%Y%m%d')}-{row_id:05d}"
+            )
+            conn.execute(
+                update(bookings)
+                .where(bookings.c.id == row_id)
+                .values(booking_id=booking_id)
+            )
+
+    except IntegrityError:
+        existing = get_overlapping_active_booking(
+            booking_date,
+            room,
+            start_time,
+            end_time,
+        )
+        if existing:
+            raise ValueError(
+                "該時段已被保留："
+                f"{existing['booking_id']}｜"
+                f"{existing['status']}｜"
+                f"{str(existing['start_time'])[:5]}–"
+                f"{str(existing['end_time'])[:5]}"
+            )
+        raise
+
+    log_action(
+        "ADMIN_ASSIST_CREATE",
+        "booking",
+        booking_id,
+        f"{room} {start_time}-{end_time} applicant={applicant_name}",
+    )
+    return booking_id, "已核准"
+
+
 def create_booking(booking_date, room, start_time, end_time, applicant_type,
                    applicant_name, identification_code, phone, email, reason):
     """

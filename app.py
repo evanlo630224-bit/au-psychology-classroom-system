@@ -95,7 +95,7 @@ def admin_password():
             return str(st.secrets["admin"]["password"])
     except Exception:
         pass
-    return os.getenv("ADMIN_PASSWORD", "Asiapsy5712!")
+    return os.getenv("ADMIN_PASSWORD", "admin123")
 
 
 def valid_email(value):
@@ -749,13 +749,13 @@ def render_public_announcements():
     if lang == "English":
         st.markdown(
             '<div class="notice-card"><b>Reservation Date Rule</b>'
-            '<p>Faculty and students may reserve classrooms only from the third day after the application date.</p></div>',
+            '<p>Faculty and students may reserve classrooms from the day after the application date (N+1).</p></div>',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
             '<div class="notice-card"><b>借用日期規則</b>'
-            '<p>教師及學生僅能申請送出當日 N+3 日起的教室時段。</p></div>',
+            '<p>教師及學生僅能申請送出當日 N+1 日起的教室時段。</p></div>',
             unsafe_allow_html=True,
         )
 
@@ -898,7 +898,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.15 Booking Management Completion Notice Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.16 N+1 & Admin Assisted Booking Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -951,7 +951,7 @@ def reserve():
     user = st.session_state.user
     lang = st.session_state.language
     is_english = lang == "English"
-    earliest_date = date.today() + timedelta(days=3)
+    earliest_date = date.today() + timedelta(days=1)
 
     conflict_notice = st.session_state.pop("booking_conflict_notice", None)
     if conflict_notice:
@@ -979,9 +979,9 @@ def reserve():
         f"登入者：{user['name']}（{user['user_type']}）"
     )
     st.caption(
-        f"Earliest available reservation date: {earliest_date} (N+3 rule)"
+        f"Earliest available reservation date: {earliest_date} (N+1 rule)"
         if is_english else
-        f"最早可申請日期：{earliest_date}（送出當日 N+3 日）"
+        f"最早可申請日期：{earliest_date}（送出當日 N+1 日）"
     )
 
     with st.form("booking"):
@@ -1009,9 +1009,9 @@ def reserve():
         st.session_state.pop("booking_conflict_notice", None)
         if booking_date < earliest_date:
             st.error(
-                "The reservation date must be at least three days after today."
+                "The reservation date must be at least one day after today."
                 if is_english else
-                "借用日期必須為送出申請當日 N+3 日起。"
+                "借用日期必須為送出申請當日 N+1 日起。"
             )
             return
         if not phone.strip() or not email.strip() or not reason.strip():
@@ -1406,14 +1406,14 @@ def admin_page():
 
     section = st.radio(
         "管理功能 / Administration Menu",
-        ["儀表板", "公告管理", "名冊管理", "開放期間", "課表管理", "借用審核", "借用管理", "操作紀錄"],
+        ["儀表板", "公告管理", "名冊管理", "開放期間", "課表管理", "協助借用", "借用審核", "借用管理", "操作紀錄"],
         horizontal=True,
         key="admin_section",
     )
 
     schema_required_sections = {
         "公告管理", "名冊管理", "開放期間", "課表管理",
-        "借用審核", "借用管理", "操作紀錄",
+        "協助借用", "借用審核", "借用管理", "操作紀錄",
     }
     if section in schema_required_sections:
         try:
@@ -1660,6 +1660,193 @@ def admin_page():
             st.info("目前尚無課表資料。")
         return None
 
+    if section == "協助借用":
+        if "admin_assist_notice" in st.session_state:
+            st.success(st.session_state.pop("admin_assist_notice"))
+
+        st.markdown("### 管理員協助借用 / Assisted Reservation")
+        st.info(
+            "管理員可協助教師或學生建立借用；此功能不受 N+1 限制，"
+            "可自當日起借用，但仍須符合系統開放期間、課表及時段衝突規則。"
+        )
+
+        all_users = [
+            row for row in get_all_authorized_users()
+            if row.get("status") == "啟用"
+        ]
+        if not all_users:
+            st.warning("目前沒有啟用中的教師或學生名單。")
+            return None
+
+        applicant_type = st.radio(
+            "申請人身分",
+            ["教師", "學生"],
+            horizontal=True,
+            key="assist_applicant_type",
+        )
+        roster = [
+            row for row in all_users
+            if row.get("user_type") == applicant_type
+        ]
+        if not roster:
+            st.warning(f"目前沒有啟用中的{applicant_type}名單。")
+            return None
+
+        roster_map = {
+            row["identification_code"]: row
+            for row in roster
+        }
+        selected_code = st.selectbox(
+            "選擇申請人",
+            list(roster_map.keys()),
+            format_func=lambda code: (
+                f"{roster_map[code]['name']}｜{code}"
+            ),
+            key="assist_applicant",
+        )
+        selected_user = roster_map[selected_code]
+
+        active_period = cached_active_period()
+        if not active_period:
+            st.error("目前尚未設定有效的借用開放期間。")
+            return None
+
+        period_start = active_period["start_date"]
+        period_end = active_period["end_date"]
+        if isinstance(period_start, str):
+            period_start = date.fromisoformat(period_start[:10])
+        if isinstance(period_end, str):
+            period_end = date.fromisoformat(period_end[:10])
+
+        admin_min_date = max(date.today(), period_start)
+        if admin_min_date > period_end:
+            st.error("目前不在借用開放期間內。")
+            return None
+
+        with st.form("admin_assisted_booking_form"):
+            left, right = st.columns(2)
+            with left:
+                assist_date = st.date_input(
+                    "借用日期",
+                    value=admin_min_date,
+                    min_value=admin_min_date,
+                    max_value=period_end,
+                    key="assist_date",
+                )
+                assist_room = st.selectbox(
+                    "教室",
+                    ROOMS,
+                    key="assist_room",
+                )
+                assist_start = st.selectbox(
+                    "開始時間",
+                    [x for x, _ in SLOTS],
+                    key="assist_start",
+                )
+                assist_end = st.selectbox(
+                    "結束時間",
+                    [x for _, x in SLOTS],
+                    key="assist_end",
+                )
+            with right:
+                assist_phone = st.text_input(
+                    "聯絡手機",
+                    key="assist_phone",
+                )
+                assist_email = st.text_input(
+                    "Email",
+                    value=selected_user.get("email") or "",
+                    key="assist_email",
+                )
+                assist_reason = st.text_area(
+                    "借用事由",
+                    height=150,
+                    key="assist_reason",
+                )
+
+            assist_submit = st.form_submit_button(
+                "管理員確認借用",
+                use_container_width=True,
+            )
+
+        if assist_submit:
+            if not assist_phone.strip() or not assist_email.strip() or not assist_reason.strip():
+                st.error("請完整填寫聯絡手機、Email 與借用事由。")
+                return None
+            if not valid_phone(assist_phone) or not valid_email(assist_email):
+                st.error("聯絡手機或 Email 格式不正確。")
+                return None
+            if assist_start >= assist_end:
+                st.error("結束時間必須晚於開始時間。")
+                return None
+
+            course_conflicts = get_course_blocks(
+                str(assist_date),
+                assist_room,
+            )
+            for course in course_conflicts:
+                course_start = str(course["start_time"])[:5]
+                course_end = str(course["end_time"])[:5]
+                if assist_start < course_end and assist_end > course_start:
+                    st.error(
+                        f"課程衝突：{course.get('course_name') or '正式課程'}｜"
+                        f"{course_start}–{course_end}"
+                    )
+                    return None
+
+            conflict = check_booking_conflict(
+                str(assist_date),
+                assist_room,
+                assist_start,
+                assist_end,
+            )
+            if conflict:
+                st.error(
+                    f"時段衝突：{conflict['detail']}。"
+                    "此時段已有待審核或已核准案件。"
+                )
+                return None
+
+            try:
+                booking_id, booking_status = create_admin_assisted_booking(
+                    str(assist_date),
+                    assist_room,
+                    assist_start,
+                    assist_end,
+                    applicant_type,
+                    selected_user["name"],
+                    selected_user["identification_code"],
+                    assist_phone,
+                    assist_email,
+                    assist_reason,
+                    reviewer="Administrator",
+                )
+            except ValueError as exc:
+                st.error(f"無法建立借用：{exc}")
+                return None
+
+            email_ok = False
+            email_message = ""
+            if email_notification_enabled():
+                email_ok, email_message = notify_booking_review(
+                    booking_id,
+                    "已核准",
+                    "管理員協助建立借用／Created by administrator",
+                )
+
+            clear_data_cache()
+            st.session_state["admin_assist_notice"] = (
+                f"管理員協助借用已完成。申請編號：{booking_id}"
+                + ("；核准通知信已寄出。" if email_ok else "")
+            )
+            if email_notification_enabled() and not email_ok:
+                st.session_state["review_result_notice"] = (
+                    f"借用已建立，但{email_message}"
+                )
+            st.rerun()
+
+        return None
+
     if section == "借用審核":
         st.markdown("### 借用申請審核 / Reservation Review")
         if "review_result_notice" in st.session_state:
@@ -1839,7 +2026,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.15", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.16", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -1893,8 +2080,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.15")
-    st.caption("Booking Management Completion Notice Edition")
+    st.caption("AU-PCRS V10.16")
+    st.caption("N+1 & Admin Assisted Booking Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

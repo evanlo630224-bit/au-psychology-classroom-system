@@ -95,7 +95,7 @@ def admin_password():
             return str(st.secrets["admin"]["password"])
     except Exception:
         pass
-    return os.getenv("ADMIN_PASSWORD", "Asiapsy5712!")
+    return os.getenv("ADMIN_PASSWORD", "admin123")
 
 
 def valid_email(value):
@@ -898,7 +898,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.16 N+1 & Admin Assisted Booking Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.18 Editable Email Autofill Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1401,6 +1401,33 @@ def query():
     )
 
 
+
+def normalize_roster_record(record):
+    data = dict(record or {})
+    return {
+        "user_type": data.get("user_type") or data.get("role") or "",
+        "name": data.get("name") or data.get("full_name") or "",
+        "identification_code": (
+            data.get("identification_code")
+            or data.get("student_id")
+            or data.get("faculty_id")
+            or data.get("staff_id")
+            or ""
+        ),
+        "email": data.get("email") or data.get("Email") or "",
+        "status": data.get("status") or "啟用",
+    }
+
+
+def roster_search_text(record):
+    item = normalize_roster_record(record)
+    return (
+        f"{item['name']} "
+        f"{item['identification_code']} "
+        f"{item['email']}"
+    ).lower()
+
+
 def admin_page():
     st.markdown("## 管理員後台 / Administration")
 
@@ -1670,9 +1697,11 @@ def admin_page():
             "可自當日起借用，但仍須符合系統開放期間、課表及時段衝突規則。"
         )
 
+        raw_users = get_all_authorized_users()
         all_users = [
-            row for row in get_all_authorized_users()
-            if row.get("status") == "啟用"
+            normalize_roster_record(row)
+            for row in raw_users
+            if normalize_roster_record(row).get("status") == "啟用"
         ]
         if not all_users:
             st.warning("目前沒有啟用中的教師或學生名單。")
@@ -1692,19 +1721,48 @@ def admin_page():
             st.warning(f"目前沒有啟用中的{applicant_type}名單。")
             return None
 
+        search_keyword = st.text_input(
+            "搜尋姓名或學號／職編",
+            placeholder="輸入姓名、學號或教師職編",
+            key="assist_roster_search",
+        ).strip().lower()
+
+        filtered_roster = roster
+        if search_keyword:
+            filtered_roster = [
+                row for row in roster
+                if search_keyword in roster_search_text(row)
+            ]
+
+        if not filtered_roster:
+            st.warning("查無符合條件的人員，請重新輸入姓名或學號／職編。")
+            return None
+
         roster_map = {
             row["identification_code"]: row
-            for row in roster
+            for row in filtered_roster
+            if row.get("identification_code")
         }
         selected_code = st.selectbox(
             "選擇申請人",
             list(roster_map.keys()),
             format_func=lambda code: (
                 f"{roster_map[code]['name']}｜{code}"
+                + (
+                    f"｜{roster_map[code]['email']}"
+                    if roster_map[code].get("email")
+                    else ""
+                )
             ),
             key="assist_applicant",
         )
         selected_user = roster_map[selected_code]
+
+        st.info(
+            f"已選擇：{selected_user['name']}｜"
+            f"{selected_user['identification_code']}｜"
+            f"{selected_user.get('email') or 'Email：待填寫'}"
+        )
 
         active_period = cached_active_period()
         if not active_period:
@@ -1755,8 +1813,9 @@ def admin_page():
                 )
                 assist_email = st.text_input(
                     "Email",
-                    value=selected_user.get("email") or "",
-                    key="assist_email",
+                    value=selected_user.get("email") or "待填寫",
+                    key=f"assist_email_{selected_user['identification_code']}",
+                    help="名冊已有 Email 會自動帶入；若顯示「待填寫」，請輸入有效 Email。",
                 )
                 assist_reason = st.text_area(
                     "借用事由",
@@ -1770,12 +1829,16 @@ def admin_page():
             )
 
         if assist_submit:
-            if not assist_phone.strip() or not assist_email.strip() or not assist_reason.strip():
-                st.error("請完整填寫聯絡手機、Email 與借用事由。")
+            if not assist_phone.strip() or not assist_reason.strip():
+                st.error("請完整填寫聯絡手機與借用事由。")
                 return None
-            if not valid_phone(assist_phone) or not valid_email(assist_email):
-                st.error("聯絡手機或 Email 格式不正確。")
+            if assist_email.strip() == "待填寫" or not valid_email(assist_email.strip()):
+                st.error("請輸入有效的 Email。")
                 return None
+            if not valid_phone(assist_phone):
+                st.error("聯絡手機格式不正確。")
+                return None
+            assist_email = assist_email.strip()
             if assist_start >= assist_end:
                 st.error("結束時間必須晚於開始時間。")
                 return None
@@ -2026,7 +2089,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.16", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.18", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -2080,8 +2143,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.16")
-    st.caption("N+1 & Admin Assisted Booking Edition")
+    st.caption("AU-PCRS V10.18")
+    st.caption("Editable Email Autofill Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

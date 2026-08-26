@@ -95,7 +95,7 @@ def admin_password():
             return str(st.secrets["admin"]["password"])
     except Exception:
         pass
-    return os.getenv("ADMIN_PASSWORD", "Asiapsy5712!")
+    return os.getenv("ADMIN_PASSWORD", "admin123")
 
 
 def valid_email(value):
@@ -898,7 +898,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.18 Editable Email Autofill Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.20 Opening Date / N+1 Rule Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -951,7 +951,36 @@ def reserve():
     user = st.session_state.user
     lang = st.session_state.language
     is_english = lang == "English"
-    earliest_date = date.today() + timedelta(days=1)
+
+    # Reservation rule:
+    # 1. Before the configured opening period, advance booking starts exactly
+    #    on the opening date.
+    # 2. During the opening period, the earliest reservation date is N+1.
+    period = cached_active_period()
+    today = date.today()
+
+    if period:
+        period_start = period["start_date"]
+        period_end = period["end_date"]
+        if isinstance(period_start, str):
+            period_start = date.fromisoformat(period_start[:10])
+        if isinstance(period_end, str):
+            period_end = date.fromisoformat(period_end[:10])
+
+        if today < period_start:
+            earliest_date = period_start
+            earliest_rule = "opening_date"
+        elif period_start <= today <= period_end:
+            earliest_date = today + timedelta(days=1)
+            earliest_rule = "n_plus_1"
+        else:
+            earliest_date = None
+            earliest_rule = "closed"
+    else:
+        period_start = None
+        period_end = None
+        earliest_date = None
+        earliest_rule = "no_period"
 
     conflict_notice = st.session_state.pop("booking_conflict_notice", None)
     if conflict_notice:
@@ -978,11 +1007,33 @@ def reserve():
         if is_english else
         f"登入者：{user['name']}（{user['user_type']}）"
     )
-    st.caption(
-        f"Earliest available reservation date: {earliest_date} (N+1 rule)"
-        if is_english else
-        f"最早可申請日期：{earliest_date}（送出當日 N+1 日）"
-    )
+    if earliest_rule == "opening_date":
+        st.caption(
+            f"Earliest available reservation date: {earliest_date} "
+            "(system opening date)"
+            if is_english else
+            f"最早可申請日期：{earliest_date}（系統開放起始日）"
+        )
+    elif earliest_rule == "n_plus_1":
+        st.caption(
+            f"Earliest available reservation date: {earliest_date} (N+1 rule)"
+            if is_english else
+            f"最早可申請日期：{earliest_date}（送出當日 N+1 日）"
+        )
+    elif earliest_rule == "closed":
+        st.warning(
+            "The reservation period has ended."
+            if is_english else
+            "目前借用開放期間已結束，暫不受理新的借用申請。"
+        )
+        return None
+    else:
+        st.warning(
+            "No active reservation period is configured."
+            if is_english else
+            "目前尚未設定有效的借用開放期間。"
+        )
+        return None
 
     with st.form("booking"):
         left, right = st.columns(2)
@@ -991,6 +1042,7 @@ def reserve():
                 "Reservation Date" if is_english else "借用日期",
                 value=earliest_date,
                 min_value=earliest_date,
+                max_value=period_end if period_end else None,
             )
             room = st.selectbox("Classroom" if is_english else "教室", ROOMS)
             start_time = st.selectbox("Start Time" if is_english else "開始時間", [x for x, _ in SLOTS])
@@ -1008,10 +1060,26 @@ def reserve():
         st.session_state.pop("booking_receipt", None)
         st.session_state.pop("booking_conflict_notice", None)
         if booking_date < earliest_date:
+            if earliest_rule == "opening_date":
+                st.error(
+                    f"Earliest available reservation date is the system opening date: "
+                    f"{earliest_date}."
+                    if is_english else
+                    f"目前尚未進入借用期間，最早可借用日期為系統開放起始日 "
+                    f"{earliest_date}。"
+                )
+            else:
+                st.error(
+                    f"Earliest available reservation date is {earliest_date} (N+1)."
+                    if is_english else
+                    f"目前已進入借用期間，最早可借用日期為 {earliest_date}（N+1）。"
+                )
+            return
+        if period_end and booking_date > period_end:
             st.error(
-                "The reservation date must be at least one day after today."
+                f"The reservation date must be on or before {period_end}."
                 if is_english else
-                "借用日期必須為送出申請當日 N+1 日起。"
+                f"借用日期不得超過目前開放期間截止日 {period_end}。"
             )
             return
         if not phone.strip() or not email.strip() or not reason.strip():
@@ -1021,10 +1089,14 @@ def reserve():
             st.error("Invalid input format." if is_english else "輸入格式不正確。")
             return
 
-        period = cached_active_period()
-        if not period or not (
-            str(period["start_date"]) <= str(booking_date) <= str(period["end_date"])
-        ):
+        if not period:
+            st.error(
+                "No active reservation period is configured."
+                if is_english else
+                "目前尚未設定有效的借用開放期間。"
+            )
+            return
+        if not (period_start <= booking_date <= period_end):
             st.error(
                 "The selected date is outside the reservation period."
                 if is_english else
@@ -2089,7 +2161,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.18", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.20", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -2143,8 +2215,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.18")
-    st.caption("Editable Email Autofill Edition")
+    st.caption("AU-PCRS V10.20")
+    st.caption("Opening Date / N+1 Rule Fix Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

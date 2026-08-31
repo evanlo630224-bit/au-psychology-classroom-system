@@ -646,6 +646,38 @@ def get_overlapping_active_booking(
         )
 
 
+
+def get_course_conflict(booking_date, room, start_time, end_time, semester=None):
+    """Check active imported course rows for date/room/time overlap."""
+    rows = get_course_blocks(
+        booking_date,
+        room,
+        semester=semester,
+    )
+    requested_start = _time(start_time)
+    requested_end = _time(end_time)
+
+    for course in rows:
+        course_start = _time(course["start_time"])
+        course_end = _time(course["end_time"])
+        if requested_start < course_end and requested_end > course_start:
+            return {
+                "type": "course",
+                "semester": course.get("semester") or "",
+                "room": course.get("room") or room,
+                "weekday": course.get("weekday"),
+                "course_name": course.get("course_name") or "正式課程",
+                "teacher": course.get("teacher") or "",
+                "start_time": str(course_start)[:5],
+                "end_time": str(course_end)[:5],
+                "detail": (
+                    f"{course.get('course_name') or '正式課程'}｜"
+                    f"{str(course_start)[:5]}–{str(course_end)[:5]}"
+                ),
+            }
+    return None
+
+
 def check_booking_conflict(booking_date, room, start_time, end_time,
                            exclude_booking_id=None):
     conflict = get_overlapping_active_booking(
@@ -710,6 +742,18 @@ def create_admin_assisted_booking(
     """
     ensure_active_booking_unique_index()
     code = str(identification_code or "").strip()
+
+    course_conflict = get_course_conflict(
+        booking_date,
+        room,
+        start_time,
+        end_time,
+    )
+    if course_conflict:
+        raise ValueError(
+            "正式課程時段衝突："
+            f"{course_conflict['detail']}。此時段不開放借用。"
+        )
 
     try:
         with engine.begin() as conn:
@@ -801,6 +845,18 @@ def create_booking(booking_date, room, start_time, end_time, applicant_type,
     reviewed_by = "SYSTEM" if auto_approve else None
     reviewed_at = datetime.now() if auto_approve else None
     code = str(identification_code or "").strip()
+
+    course_conflict = get_course_conflict(
+        booking_date,
+        room,
+        start_time,
+        end_time,
+    )
+    if course_conflict:
+        raise ValueError(
+            "正式課程時段衝突："
+            f"{course_conflict['detail']}。此時段不開放借用。"
+        )
 
     try:
         with engine.begin() as conn:

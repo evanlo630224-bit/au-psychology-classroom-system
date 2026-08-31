@@ -95,7 +95,7 @@ def admin_password():
             return str(st.secrets["admin"]["password"])
     except Exception:
         pass
-    return os.getenv("ADMIN_PASSWORD", "Asiapsy5712!")
+    return os.getenv("ADMIN_PASSWORD", "admin123")
 
 
 def valid_email(value):
@@ -898,7 +898,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.20 Opening Date / N+1 Rule Fix Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.21 Course Schedule Conflict Enforcement Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1101,6 +1101,26 @@ def reserve():
                 "The selected date is outside the reservation period."
                 if is_english else
                 "所選日期不在開放期間。"
+            )
+            return
+
+        course_conflict = get_course_conflict(
+            str(booking_date),
+            room,
+            start_time,
+            end_time,
+        )
+        if course_conflict:
+            st.error(
+                (
+                    f"Course schedule conflict: {course_conflict['detail']}. "
+                    "This classroom is occupied by a scheduled course and cannot be reserved."
+                )
+                if is_english else
+                (
+                    f"正式課程時段衝突：{course_conflict['detail']}。"
+                    "此時段已有匯入之正式課程，不開放借用。"
+                )
             )
             return
 
@@ -1915,19 +1935,18 @@ def admin_page():
                 st.error("結束時間必須晚於開始時間。")
                 return None
 
-            course_conflicts = get_course_blocks(
+            course_conflict = get_course_conflict(
                 str(assist_date),
                 assist_room,
+                assist_start,
+                assist_end,
             )
-            for course in course_conflicts:
-                course_start = str(course["start_time"])[:5]
-                course_end = str(course["end_time"])[:5]
-                if assist_start < course_end and assist_end > course_start:
-                    st.error(
-                        f"課程衝突：{course.get('course_name') or '正式課程'}｜"
-                        f"{course_start}–{course_end}"
-                    )
-                    return None
+            if course_conflict:
+                st.error(
+                    f"正式課程時段衝突：{course_conflict['detail']}。"
+                    "此時段已有匯入之正式課程，不開放借用。"
+                )
+                return None
 
             conflict = check_booking_conflict(
                 str(assist_date),
@@ -2112,6 +2131,19 @@ def admin_page():
                 new_reason = st.text_area("借用事由", value=item["reason"])
 
                 if st.button("儲存修改"):
+                    course_conflict = get_course_conflict(
+                        str(new_date),
+                        new_room,
+                        new_start,
+                        new_end,
+                    )
+                    if course_conflict:
+                        st.error(
+                            f"正式課程時段衝突：{course_conflict['detail']}。"
+                            "此時段已有匯入之正式課程，不可修改至此時段。"
+                        )
+                        return None
+
                     conflict = check_booking_conflict(
                         str(new_date),
                         new_room,
@@ -2161,7 +2193,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.20", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.21", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -2215,8 +2247,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.20")
-    st.caption("Opening Date / N+1 Rule Fix Edition")
+    st.caption("AU-PCRS V10.21")
+    st.caption("Course Schedule Conflict Enforcement Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

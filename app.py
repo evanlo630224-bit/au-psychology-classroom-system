@@ -95,7 +95,7 @@ def admin_password():
             return str(st.secrets["admin"]["password"])
     except Exception:
         pass
-    return os.getenv("ADMIN_PASSWORD", "Asiapsy5712!")
+    return os.getenv("ADMIN_PASSWORD", "admin123")
 
 
 def valid_email(value):
@@ -381,6 +381,10 @@ def topbar(language_selector=False):
         st.markdown('''<div class="topbar" style="margin-bottom:0"><div class="brand">亞洲大學心理學系<span>Department of Psychology, Asia University</span></div><div class="language-row"><span class="lang-caption">AU-PCRS</span></div></div>''', unsafe_allow_html=True)
     with c2:
         if language_selector:
+            st.markdown(
+                '<div style="font-size:0.95rem;font-weight:600;color:#3b3746;margin:0 0 0.35rem 0.15rem;line-height:1.2">語言選擇 / <strong>Select Language</strong></div>',
+                unsafe_allow_html=True,
+            )
             language = st.selectbox("語言 / Language", ["中文", "English"], index=0 if st.session_state.language == "中文" else 1, label_visibility="collapsed")
             if language != st.session_state.language:
                 st.session_state.language = language
@@ -898,7 +902,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.21 Course Schedule Conflict Enforcement Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.22 Language Selector Label Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -2193,7 +2197,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.21", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.22", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -2247,8 +2251,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.21")
-    st.caption("Course Schedule Conflict Enforcement Edition")
+    st.caption("AU-PCRS V10.22")
+    st.caption("Language Selector Label Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

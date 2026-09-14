@@ -95,7 +95,7 @@ def admin_password():
             return str(st.secrets["admin"]["password"])
     except Exception:
         pass
-    return os.getenv("ADMIN_PASSWORD", "Asiapsy5712!")
+    return os.getenv("ADMIN_PASSWORD", "admin123")
 
 
 def valid_email(value):
@@ -902,7 +902,7 @@ def login_page():
     with q4:
         if st.button(f'▥  {p["news_title"]}\n\n{p["news_sub"]}', use_container_width=True, key="quick_news"): _set_public_page("news")
     copyright_text="© 2026 Department of Psychology, Asia University" if lang=="English" else "© 2026 亞洲大學心理學系"
-    st.markdown(f'<div class="footer-note">AU-PCRS V10.23 Clear All Rosters Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer-note">AU-PCRS V10.24 Roster Filter & Separate Delete Edition ｜ {copyright_text}</div>', unsafe_allow_html=True)
     return None
 
 
@@ -1680,14 +1680,28 @@ def admin_page():
         if "roster_management_notice" in st.session_state:
             st.success(st.session_state.pop("roster_management_notice"))
 
-        user_type = st.radio("名冊類別", ["教師", "學生"], horizontal=True)
+        user_type = st.radio(
+            "名冊類別",
+            ["教師", "學生"],
+            horizontal=True,
+            key="roster_user_type",
+        )
+
         upload = st.file_uploader(
             "Excel欄位：辨識碼、姓名、聯絡信箱、狀態",
             type=["xlsx"],
-            key="roster_upload",
+            key=f"roster_upload_{user_type}",
         )
-        replace = st.checkbox("覆蓋此類既有名冊")
-        if st.button("匯入名冊", use_container_width=True):
+        replace = st.checkbox(
+            "覆蓋此類既有名冊",
+            key=f"replace_roster_{user_type}",
+        )
+
+        if st.button(
+            "匯入名冊",
+            use_container_width=True,
+            key=f"import_roster_{user_type}",
+        ):
             if upload is None:
                 st.error("請先選擇Excel檔案。")
             else:
@@ -1698,43 +1712,81 @@ def admin_page():
                         replace,
                     )
                     clear_data_cache()
-                    st.success(f"匯入完成：{result}")
+                    st.session_state["roster_management_notice"] = (
+                        f"{user_type}名冊匯入完成：{result}"
+                    )
+                    st.rerun()
                 except Exception as exc:
                     st.error(f"匯入失敗：{exc}")
 
-        rows = cached_authorized_users()
+        all_rows = cached_authorized_users()
+        rows = [
+            row for row in all_rows
+            if row.get("user_type") == user_type
+        ]
+
+        st.markdown(f"### 已匯入{user_type}名冊")
         if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(
+                pd.DataFrame(rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(f"目前共 {len(rows)} 筆{user_type}名冊資料。")
         else:
-            st.info("目前尚無名冊資料。")
+            st.info(f"目前尚無已匯入的{user_type}名冊資料。")
 
         st.divider()
-        st.markdown("### 刪除所有已上傳名冊")
+        st.markdown("### 刪除名冊資料")
         st.warning(
-            "此功能會刪除目前系統中所有已匯入的教師與學生名冊。"
-            "不會刪除借用紀錄、課表、公告或其他系統設定。"
+            "教師與學生名冊可分別刪除。"
+            "刪除某一類名冊不會影響另一類名冊，也不會刪除借用紀錄、"
+            "課表、公告或其他系統設定。"
         )
 
-        confirm_delete_all = st.checkbox(
-            "我確認要刪除所有已上傳的教師與學生名冊",
-            key="confirm_delete_all_rosters",
-        )
+        delete_teacher_col, delete_student_col = st.columns(2)
 
-        if st.button(
-            "刪除所有已上傳名冊",
-            type="secondary",
-            use_container_width=True,
-            key="delete_all_rosters_button",
-        ):
-            if not confirm_delete_all:
-                st.error("請先勾選確認後再執行刪除。")
-            else:
-                deleted_count = delete_all_authorized_users()
-                clear_data_cache()
-                st.session_state["roster_management_notice"] = (
-                    f"已完成刪除所有已上傳名冊，共刪除 {deleted_count} 筆資料。"
-                )
-                st.rerun()
+        with delete_teacher_col:
+            st.markdown("#### 教師名冊")
+            confirm_delete_teachers = st.checkbox(
+                "我確認要刪除所有教師名冊",
+                key="confirm_delete_teacher_roster",
+            )
+            if st.button(
+                "刪除所有教師名冊",
+                use_container_width=True,
+                key="delete_teacher_roster_button",
+            ):
+                if not confirm_delete_teachers:
+                    st.error("請先勾選教師名冊刪除確認。")
+                else:
+                    deleted_count = delete_authorized_users_by_type("教師")
+                    clear_data_cache()
+                    st.session_state["roster_management_notice"] = (
+                        f"已完成刪除教師名冊，共刪除 {deleted_count} 筆資料。"
+                    )
+                    st.rerun()
+
+        with delete_student_col:
+            st.markdown("#### 學生名冊")
+            confirm_delete_students = st.checkbox(
+                "我確認要刪除所有學生名冊",
+                key="confirm_delete_student_roster",
+            )
+            if st.button(
+                "刪除所有學生名冊",
+                use_container_width=True,
+                key="delete_student_roster_button",
+            ):
+                if not confirm_delete_students:
+                    st.error("請先勾選學生名冊刪除確認。")
+                else:
+                    deleted_count = delete_authorized_users_by_type("學生")
+                    clear_data_cache()
+                    st.session_state["roster_management_notice"] = (
+                        f"已完成刪除學生名冊，共刪除 {deleted_count} 筆資料。"
+                    )
+                    st.rerun()
 
         return None
 
@@ -2229,7 +2281,7 @@ def admin_page():
     return None
 
 
-st.set_page_config(page_title="AU-PCRS V10.23", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AU-PCRS V10.24", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 for key, value in {"language": "中文", "user": None, "admin": False, "public_page": "login", "portal_message": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -2283,8 +2335,8 @@ with st.sidebar:
         st.session_state.language = selected_language
         st.rerun()
 
-    st.caption("AU-PCRS V10.23")
-    st.caption("Clear All Rosters Edition")
+    st.caption("AU-PCRS V10.24")
+    st.caption("Roster Filter & Separate Delete Edition")
     if st.button(t["logout"], use_container_width=True, key="sidebar_logout"):
         st.session_state.user = None
         st.session_state.admin = False

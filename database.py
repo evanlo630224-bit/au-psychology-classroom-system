@@ -387,16 +387,24 @@ def import_authorized_users(df:pd.DataFrame,user_type:str,replace:bool):
             else: c.execute(insert(authorized_users).values(user_type=user_type,identification_code=code,**vals)); ins+=1
     log_action("IMPORT","authorized_users",user_type,f"新增{ins} 更新{upd}")
     return {"inserted":ins,"updated":upd,"skipped":skip}
-def delete_all_authorized_users():
-    """Delete all uploaded faculty/student roster records only."""
+def delete_authorized_users_by_type(user_type):
+    """Delete all uploaded roster records for one user type only."""
+    if user_type not in {"教師", "學生"}:
+        raise ValueError("不支援的名冊類型。")
+
     with engine.begin() as conn:
-        result = conn.execute(delete(authorized_users))
+        result = conn.execute(
+            delete(authorized_users).where(
+                authorized_users.c.user_type == user_type
+            )
+        )
+
     deleted_count = int(result.rowcount or 0)
     log_action(
-        "DELETE_ALL",
+        "DELETE_ROSTER_BY_TYPE",
         "authorized_users",
-        "ALL",
-        f"Deleted all uploaded roster records: {deleted_count}",
+        user_type,
+        f"Deleted {user_type} roster records: {deleted_count}",
     )
     return deleted_count
 

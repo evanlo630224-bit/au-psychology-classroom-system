@@ -387,6 +387,20 @@ def import_authorized_users(df:pd.DataFrame,user_type:str,replace:bool):
             else: c.execute(insert(authorized_users).values(user_type=user_type,identification_code=code,**vals)); ins+=1
     log_action("IMPORT","authorized_users",user_type,f"新增{ins} 更新{upd}")
     return {"inserted":ins,"updated":upd,"skipped":skip}
+def delete_all_authorized_users():
+    """Delete all uploaded faculty/student roster records only."""
+    with engine.begin() as conn:
+        result = conn.execute(delete(authorized_users))
+    deleted_count = int(result.rowcount or 0)
+    log_action(
+        "DELETE_ALL",
+        "authorized_users",
+        "ALL",
+        f"Deleted all uploaded roster records: {deleted_count}",
+    )
+    return deleted_count
+
+
 def get_all_authorized_users():
     with engine.connect() as c:return _rows(c.execute(select(authorized_users).order_by(authorized_users.c.user_type,authorized_users.c.identification_code)))
 def save_open_period(semester,start_date,end_date):
